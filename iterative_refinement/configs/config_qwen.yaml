@@ -1,0 +1,46 @@
+# Iterative Refinement Config — Qwen3-VL only (no API keys needed)
+# Run on cluster with GPU
+
+dataset:
+  local_dir: dataset
+
+max_iterations: 3
+retries: 1
+retry_backoff_s: 5
+
+recorder:
+  fps: 12
+  duration: 10
+  width: 1024
+  height: 768
+
+generator:
+  model: qwen3vl
+  qwen3vl:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    fps: 2.0
+    max_pixels: 112896   # 336*336
+    max_new_tokens: 8192
+    temperature: 0.2
+    top_p: 0.9
+
+critic:
+  model: qwen3vl
+  qwen3vl:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    fps: 2.0
+    max_pixels: 112896
+    max_new_tokens: 2048
+    temperature: 0.0
+    top_p: 1.0
+
+editor:
+  model: qwen3vl
+  include_target_video: false
+  qwen3vl:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    fps: 2.0
+    max_pixels: 112896
+    max_new_tokens: 8192
+    temperature: 0.2
+    top_p: 0.9

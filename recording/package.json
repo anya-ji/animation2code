@@ -1,0 +1,13 @@
+{
+  "name": "anim2code-recorder-v2",
+  "version": "2.0.0",
+  "description": "Record CodePen animations to MP4 using puppeteer-capture",
+  "type": "module",
+  "scripts": {
+    "record": "node record.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.0.0",
+    "puppeteer-capture": "^1.0.0"
+  }
+}

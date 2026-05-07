@@ -1,0 +1,70 @@
+# Iterative Refinement Config
+# Each stage (generator / critic / editor) independently selects a model.
+# Supported models: gemini | qwen3vl
+
+# ── Dataset ───────────────────────────────────────────────────────────────
+dataset:
+  # Path to local dataset directory (each subdir must have animation.mp4)
+  # Relative to repo root. Override with --dataset-dir on CLI.
+  local_dir: dataset
+
+# ── Run settings ──────────────────────────────────────────────────────────
+max_iterations: 3      # refinement rounds after initial generation (iter_0)
+retries: 1             # per-stage retry attempts on error (with backoff)
+retry_backoff_s: 5     # seconds to wait between retries (doubles each attempt)
+
+# ── Recording ─────────────────────────────────────────────────────────────
+recorder:
+  fps: 12
+  duration: 10         # fixed recording length in seconds
+  width: 1024
+  height: 768
+
+# ── Stage: initial code generation from ground truth video ────────────────
+generator:
+  model: gemini        # gemini | qwen3vl
+  gemini:
+    model_id: gemini-3-flash-preview
+    fps: 5             # frames/sec Gemini samples from the video (affects token count)
+    temperature: 0.0
+    max_output_tokens: 65536
+  qwen3vl:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    fps: 2.0
+    max_pixels: 112896   # 336*336
+    max_new_tokens: 8192
+    temperature: 0.2
+    top_p: 0.9
+
+# ── Stage: visual critic compares target vs generated video ───────────────
+critic:
+  model: gemini        # gemini | qwen3vl
+  gemini:
+    model_id: gemini-3-flash-preview
+    fps: 5             # critic sees both videos at this fps
+    temperature: 0.0
+    max_output_tokens: 8192
+  qwen3vl:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    fps: 2.0
+    max_pixels: 112896
+    max_new_tokens: 2048
+    temperature: 0.0
+    top_p: 1.0
+
+# ── Stage: code editor applies critique to produce updated HTML ───────────
+editor:
+  model: gemini        # gemini | qwen3vl
+  include_target_video: false  # pass ground truth video to editor for reference
+  gemini:
+    model_id: gemini-3-flash-preview
+    fps: 5             # fps of the optional reference video passed to the editor
+    temperature: 0.2
+    max_output_tokens: 65536
+  qwen3vl:
+    model_id: Qwen/Qwen3-VL-8B-Instruct
+    fps: 2.0
+    max_pixels: 112896
+    max_new_tokens: 8192
+    temperature: 0.2
+    top_p: 0.9

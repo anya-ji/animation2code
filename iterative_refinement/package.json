@@ -1,0 +1,17 @@
+{
+  "name": "iterative-refinement-recorder",
+  "version": "1.0.0",
+  "description": "Single-file HTML recorder for iterative refinement experiment",
+  "type": "module",
+  "scripts": {
+    "record": "node recorder.js"
+  },
+  "main": "recorder.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "puppeteer": "^24.40.0",
+    "puppeteer-capture": "^1.46.0"
+  }
+}

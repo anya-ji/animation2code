@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iterative Refinement Visualizer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #232635;
+      --border: #2e3248;
+      --accent: #6c8fff;
+      --accent2: #a78bfa;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --success: #34d399;
+      --error: #f87171;
+      --warning: #fbbf24;
+      --panel-w: 640px;
+      --radius: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .topbar h1 {
+      font-size: 16px;
+      font-weight: 600;
+      white-space: nowrap;
+      color: var(--accent);
+    }
+
+    .topbar select, .topbar input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 6px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .topbar select:focus, .topbar input:focus {
+      border-color: var(--accent);
+    }
+
+    #folder-select { min-width: 220px; }
+    #search-input { min-width: 200px; }
+
+    .topbar .spacer { flex: 1; }
+
+    .stat-pill {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Pagination ── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pagination button {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 5px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .pagination button:hover:not(:disabled) { background: var(--border); }
+    .pagination button:disabled { opacity: 0.35; cursor: not-allowed; }
+    .pagination button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    .page-info {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Main content ── */
+    .main {
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 80px 0;
+      font-size: 14px;
+    }
+
+    /* ── Example card ── */
+    .example-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+      flex-wrap: wrap;
+    }
+
+    .example-id {
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--text);
+    }
+
+    .status-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status-success { background: rgba(52,211,153,0.15); color: var(--success); }
+    .status-error   { background: rgba(248,113,113,0.15); color: var(--error); }
+    .status-partial { background: rgba(251,191,36,0.15);  color: var(--warning); }
+
+    .card-header .spacer { flex: 1; }
+
+    .btn {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+    .btn.btn-accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.btn-accent:hover { opacity: 0.85; }
+
+    /* ── Video strip ── */
+    .video-strip {
+      display: flex;
+      overflow-x: auto;
+      gap: 0;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .video-col {
+      flex: 0 0 auto;
+      width: 240px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .video-col:last-child { border-right: none; }
+
+    .video-col-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      padding: 7px 10px 5px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .video-col-label.gt { color: var(--success); }
+    .video-col-label.iter-0 { color: var(--accent); }
+    .video-col-label.iter-n { color: var(--accent2); }
+
+    .video-wrap {
+      position: relative;
+      background: #000;
+    }
+
+    .video-wrap video {
+      display: block;
+      width: 100%;
+      height: 160px;
+      object-fit: contain;
+    }
+
+    .video-placeholder {
+      width: 100%;
+      height: 160px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 12px;
+      background: #0a0c12;
+    }
+
+    .video-actions {
+      display: flex;
+      gap: 6px;
+      padding: 7px 8px;
+      flex-wrap: wrap;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Side panel ── */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 200;
+    }
+
+    .overlay.open { display: block; }
+
+    .side-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      height: 100vh;
+      width: var(--panel-w);
+      max-width: 95vw;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      z-index: 201;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+    }
+
+    .side-panel.open { transform: translateX(0); }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+      flex-shrink: 0;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+    }
+
+    .panel-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px;
+    }
+
+    .panel-close:hover { color: var(--text); }
+
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+    }
+
+    .panel-body pre {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 16px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+    }
+
+    .panel-loading {
+      padding: 40px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 60px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ── Metric chips ── */
+    .metric-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 6px 8px;
+      border-top: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+    }
+
+    .metric-chip {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 3px 7px;
+      min-width: 56px;
+    }
+
+    .metric-chip .chip-label {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .metric-chip .chip-value {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    /* ── Syntax coloring (very lightweight) ── */
+    .lang-html .tag { color: #7dd3fc; }
+    .lang-html .attr { color: #a5f3fc; }
+    .lang-html .string { color: #86efac; }
+    .lang-json .key { color: #c4b5fd; }
+    .lang-json .string { color: #86efac; }
+    .lang-json .number { color: #fca5a5; }
+    .lang-json .bool { color: #fbbf24; }
+    .lang-json .null { color: #94a3b8; }
+  </style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <h1>Iterative Refinement</h1>
+
+  <select id="folder-select">
+    <option value="">Loading folders…</option>
+  </select>
+
+  <input id="search-input" type="search" placeholder="Search by example name…" />
+
+  <div class="spacer"></div>
+
+  <span class="stat-pill" id="stat-pill"></span>
+
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<!-- Main content -->
+<div class="main" id="main">
+  <div class="empty-state">Select a run folder above to begin.</div>
+</div>
+
+<!-- Side panel overlay -->
+<div class="overlay" id="overlay"></div>
+<div class="side-panel" id="side-panel">
+  <div class="panel-header">
+    <span class="panel-title" id="panel-title">—</span>
+    <button class="panel-close" id="panel-close" title="Close">✕</button>
+  </div>
+  <div class="panel-body" id="panel-body">
+    <div class="panel-loading">Nothing loaded yet.</div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  folder: '',
+  search: '',
+  page: 1,
+  perPage: 10,
+  total: 0,
+};
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const folderSelect = document.getElementById('folder-select');
+const searchInput  = document.getElementById('search-input');
+const mainEl       = document.getElementById('main');
+const paginationEl = document.getElementById('pagination');
+const statPill     = document.getElementById('stat-pill');
+const overlay      = document.getElementById('overlay');
+const sidePanel    = document.getElementById('side-panel');
+const panelTitle   = document.getElementById('panel-title');
+const panelBody    = document.getElementById('panel-body');
+const panelClose   = document.getElementById('panel-close');
+
+// ── Utility ────────────────────────────────────────────────────────────────
+async function apiFetch(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+async function apiFetchText(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.text();
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── Folder init ────────────────────────────────────────────────────────────
+async function initFolders() {
+  const folders = await apiFetch('/api/folders');
+  folderSelect.innerHTML = `<option value="">— select run folder —</option>` +
+    folders.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
+  if (folders.length > 0) {
+    folderSelect.value = folders[0];
+    state.folder = folders[0];
+    loadExamples();
+  }
+}
+
+// ── Load examples ──────────────────────────────────────────────────────────
+async function loadExamples() {
+  if (!state.folder) {
+    mainEl.innerHTML = '<div class="empty-state">Select a run folder above to begin.</div>';
+    statPill.textContent = '';
+    paginationEl.innerHTML = '';
+    return;
+  }
+
+  mainEl.innerHTML = '<div class="loading-bar"><span class="spinner"></span> Loading…</div>';
+
+  const params = new URLSearchParams({
+    folder:   state.folder,
+    page:     state.page,
+    per_page: state.perPage,
+    search:   state.search,
+  });
+
+  const data = await apiFetch(`/api/examples?${params}`);
+  state.total = data.total;
+
+  statPill.textContent = `${data.total} example${data.total !== 1 ? 's' : ''}`;
+
+  renderPagination(data.page, data.total, data.per_page);
+
+  if (data.examples.length === 0) {
+    mainEl.innerHTML = '<div class="empty-state">No examples found.</div>';
+    return;
+  }
+
+  mainEl.innerHTML = '';
+  for (const exampleId of data.examples) {
+    const card = await buildExampleCard(exampleId);
+    mainEl.appendChild(card);
+  }
+}
+
+// ── Build a single example card ────────────────────────────────────────────
+async function buildExampleCard(exampleId) {
+  const card = document.createElement('div');
+  card.className = 'example-card';
+
+  // Fetch trace, iters, and metrics in parallel
+  let trace = null, iters = [], metrics = null;
+  try {
+    [trace, iters, metrics] = await Promise.all([
+      apiFetch(`/api/trace?folder=${encodeURIComponent(state.folder)}&example=${encodeURIComponent(exampleId)}`),
+      apiFetch(`/api/iters?folder=${encodeURIComponent(state.folder)}&example=${encodeURIComponent(exampleId)}`),
+      apiFetch(`/api/metrics?folder=${encodeURIComponent(state.folder)}&example=${encodeURIComponent(exampleId)}`),
+    ]);
+  } catch { /* leave defaults */ }
+
+  const status = trace?.status ?? 'unknown';
+  const statusClass = status === 'success' ? 'status-success'
+                    : status === 'error'   ? 'status-error'
+                    : 'status-partial';
+
+  card.innerHTML = `
+    <div class="card-header">
+      <span class="example-id">${escapeHtml(exampleId)}</span>
+      <span class="status-badge ${statusClass}">${escapeHtml(status)}</span>
+      <span class="spacer"></span>
+      <button class="btn" data-action="trace" data-example="${escapeHtml(exampleId)}">Trace</button>
+    </div>
+    <div class="video-strip" id="strip-${escapeHtml(exampleId)}"></div>
+  `;
+
+  const strip = card.querySelector(`#strip-${CSS.escape(exampleId)}`);
+
+  // Ground truth column
+  strip.appendChild(buildVideoCol({
+    label: 'Ground Truth',
+    labelClass: 'gt',
+    videoSrc: `/video/gt/${encodeURIComponent(exampleId)}.mp4`,
+    buttons: [],
+  }));
+
+  // Iteration columns
+  for (const iter of iters) {
+    const iterNum = parseInt(iter.split('_')[1], 10);
+    const isFirst = iterNum === 0;
+    const buttons = [];
+
+    buttons.push({ label: 'Code', action: 'code', file: 'full.html',       iter });
+    if (!isFirst) {
+      buttons.push({ label: 'Feedback', action: 'text', file: 'feedback.txt',    iter });
+      buttons.push({ label: 'Raw critic', action: 'text', file: 'raw_critic.txt', iter });
+      buttons.push({ label: 'Raw editor', action: 'text', file: 'raw_editor.txt', iter });
+    } else {
+      buttons.push({ label: 'Raw output', action: 'text', file: 'raw_output.txt', iter });
+    }
+
+    strip.appendChild(buildVideoCol({
+      label: isFirst ? 'iter 0 (initial)' : `iter ${iterNum}`,
+      labelClass: isFirst ? 'iter-0' : 'iter-n',
+      videoSrc: `/video/output/${encodeURIComponent(state.folder)}/${encodeURIComponent(exampleId)}/${iter}/animation.mp4`,
+      buttons,
+      exampleId,
+      iter,
+      iterMetrics: metrics ? metrics[iter] : null,
+    }));
+  }
+
+  // Event delegation
+  card.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const ex = btn.dataset.example || exampleId;
+    const it = btn.dataset.iter;
+    const file = btn.dataset.file;
+    if (action === 'trace')    openTrace(ex);
+    else if (action === 'code') openCode(ex, it, file);
+    else if (action === 'text') openText(ex, it, file);
+  });
+
+  return card;
+}
+
+function metricColor(value) {
+  if (value === null || value === undefined) return 'var(--text-muted)';
+  // Simple traffic-light: blue accent for all, but shade by quartile feel
+  if (value >= 0.6) return 'var(--success)';
+  if (value >= 0.35) return 'var(--accent)';
+  if (value >= 0.15) return 'var(--warning)';
+  return 'var(--error)';
+}
+
+function buildMetricChip(label, value) {
+  const display = (value !== null && value !== undefined) ? value.toFixed(3) : '—';
+  const color = metricColor(value);
+  return `
+    <div class="metric-chip">
+      <span class="chip-label">${escapeHtml(label)}</span>
+      <span class="chip-value" style="color:${color}">${display}</span>
+    </div>
+  `;
+}
+
+function buildVideoCol({ label, labelClass, videoSrc, buttons, exampleId, iter, iterMetrics }) {
+  const col = document.createElement('div');
+  col.className = 'video-col';
+
+  const labelEl = `<div class="video-col-label ${labelClass}">${escapeHtml(label)}</div>`;
+
+  const videoEl = `
+    <div class="video-wrap">
+      <video src="${videoSrc}" muted loop autoplay playsinline
+             onerror="this.parentNode.innerHTML='<div class=\\'video-placeholder\\'>No video</div>'">
+      </video>
+    </div>
+  `;
+
+  const btnsHtml = buttons.length ? `
+    <div class="video-actions">
+      ${buttons.map(b => `
+        <button class="btn" data-action="${escapeHtml(b.action)}"
+          data-file="${escapeHtml(b.file)}"
+          data-iter="${escapeHtml(b.iter || iter || '')}"
+          data-example="${escapeHtml(exampleId || '')}">
+          ${escapeHtml(b.label)}
+        </button>
+      `).join('')}
+    </div>
+  ` : '';
+
+  let metricsHtml = '';
+  if (iterMetrics && !iterMetrics.error) {
+    metricsHtml = `
+      <div class="metric-row">
+        ${buildMetricChip('DINO', iterMetrics.dino_combined)}
+        ${buildMetricChip('Prec', iterMetrics.bbox_precision)}
+        ${buildMetricChip('Rec', iterMetrics.bbox_recall)}
+      </div>
+    `;
+  }
+
+  col.innerHTML = labelEl + videoEl + btnsHtml + metricsHtml;
+  return col;
+}
+
+// ── Side panel ─────────────────────────────────────────────────────────────
+function openPanel(title, contentFn) {
+  panelTitle.textContent = title;
+  panelBody.innerHTML = '<div class="panel-loading"><span class="spinner"></span> Loading…</div>';
+  overlay.classList.add('open');
+  sidePanel.classList.add('open');
+  contentFn();
+}
+
+function closePanel() {
+  overlay.classList.remove('open');
+  sidePanel.classList.remove('open');
+}
+
+overlay.addEventListener('click', closePanel);
+panelClose.addEventListener('click', closePanel);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+
+async function openTrace(exampleId) {
+  openPanel(`trace.json — ${exampleId}`, async () => {
+    try {
+      const text = await apiFetchText(
+        `/api/trace?folder=${encodeURIComponent(state.folder)}&example=${encodeURIComponent(exampleId)}`
+      );
+      const pretty = JSON.stringify(JSON.parse(text), null, 2);
+      panelBody.innerHTML = `<pre>${colorJson(escapeHtml(pretty))}</pre>`;
+    } catch (err) {
+      panelBody.innerHTML = `<pre style="color:var(--error)">${escapeHtml(err.message)}</pre>`;
+    }
+  });
+}
+
+async function openCode(exampleId, iter, filename) {
+  openPanel(`${iter}/${filename} — ${exampleId}`, async () => {
+    try {
+      const text = await apiFetchText(
+        `/api/file?folder=${encodeURIComponent(state.folder)}&example=${encodeURIComponent(exampleId)}&iter=${encodeURIComponent(iter)}&filename=${encodeURIComponent(filename)}`
+      );
+      panelBody.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
+    } catch (err) {
+      panelBody.innerHTML = `<pre style="color:var(--error)">${escapeHtml(err.message)}</pre>`;
+    }
+  });
+}
+
+async function openText(exampleId, iter, filename) {
+  openPanel(`${iter}/${filename} — ${exampleId}`, async () => {
+    try {
+      const text = await apiFetchText(
+        `/api/file?folder=${encodeURIComponent(state.folder)}&example=${encodeURIComponent(exampleId)}&iter=${encodeURIComponent(iter)}&filename=${encodeURIComponent(filename)}`
+      );
+      panelBody.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
+    } catch (err) {
+      panelBody.innerHTML = `<pre style="color:var(--error)">${escapeHtml(err.message)}</pre>`;
+    }
+  });
+}
+
+// ── Light JSON colorizer ────────────────────────────────────────────────────
+function colorJson(escaped) {
+  return escaped
+    .replace(/(&quot;[^&]*&quot;)\s*:/g, '<span style="color:#c4b5fd">$1</span>:')
+    .replace(/:\s*(&quot;[^&]*&quot;)/g, ': <span style="color:#86efac">$1</span>')
+    .replace(/:\s*(\d+\.?\d*)/g, ': <span style="color:#fca5a5">$1</span>')
+    .replace(/:\s*(true|false)/g, ': <span style="color:#fbbf24">$1</span>')
+    .replace(/:\s*(null)/g, ': <span style="color:#94a3b8">$1</span>');
+}
+
+// ── Pagination ─────────────────────────────────────────────────────────────
+function renderPagination(currentPage, total, perPage) {
+  const totalPages = Math.ceil(total / perPage);
+  if (totalPages <= 1) { paginationEl.innerHTML = ''; return; }
+
+  const pages = [];
+  // Show at most 7 page buttons with ellipsis
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (currentPage > 3) pages.push('…');
+    for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) pages.push(i);
+    if (currentPage < totalPages - 2) pages.push('…');
+    pages.push(totalPages);
+  }
+
+  paginationEl.innerHTML = `
+    <button id="pg-prev" ${currentPage === 1 ? 'disabled' : ''}>‹</button>
+    ${pages.map(p => p === '…'
+      ? `<span style="color:var(--text-muted);padding:0 4px">…</span>`
+      : `<button class="pg-btn ${p === currentPage ? 'active' : ''}" data-page="${p}">${p}</button>`
+    ).join('')}
+    <button id="pg-next" ${currentPage === totalPages ? 'disabled' : ''}>›</button>
+    <span class="page-info">${currentPage} / ${totalPages}</span>
+  `;
+
+  paginationEl.querySelector('#pg-prev')?.addEventListener('click', () => goToPage(currentPage - 1));
+  paginationEl.querySelector('#pg-next')?.addEventListener('click', () => goToPage(currentPage + 1));
+  paginationEl.querySelectorAll('.pg-btn').forEach(btn => {
+    btn.addEventListener('click', () => goToPage(parseInt(btn.dataset.page, 10)));
+  });
+}
+
+function goToPage(p) {
+  state.page = p;
+  loadExamples();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Event listeners ─────────────────────────────────────────────────────────
+folderSelect.addEventListener('change', () => {
+  state.folder = folderSelect.value;
+  state.page = 1;
+  loadExamples();
+});
+
+let searchTimer;
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.search = searchInput.value.trim();
+    state.page = 1;
+    loadExamples();
+  }, 300);
+});
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+initFolders().catch(err => {
+  mainEl.innerHTML = `<div class="empty-state" style="color:var(--error)">Failed to load: ${escapeHtml(err.message)}</div>`;
+});
+</script>
+</body>
+</html>
