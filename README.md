@@ -1,6 +1,6 @@
 # Animation2Code
 
-Code release for the Animation2Code paper.
+Code release for "Animation2Code: Evaluating Temporal Visual Reasoning in Video-to-Code Generation".
 
 ## Structure
 
@@ -16,7 +16,7 @@ Each directory has its own README with setup instructions and usage examples.
 
 ## Dataset
 
-The dataset is available on HuggingFace: `anim2code/anim2code`.
+The dataset will be made available on HuggingFace.
 
 Each example has:
 - `animation.mp4` — ground-truth animation video
