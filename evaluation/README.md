@@ -16,9 +16,9 @@ DTW alignment is on by default. Use `--without-dtw` to disable it.
 | `bbox` | Each video cropped to its own animated bbox, then compared |
 | `temporal_fidelity` | CoTracker motion direction cosine similarity |
 | `tsed` | HTML AST edit distance (code similarity) |
-| `tsed_tripart` | TSED with tripartite structure weighting |
+| `tsed_tripart` | TSED with tripartite structure weighting (HTML/CSS/JS) |
 
-All video methods support `--sim ssim` (default) or `--sim clip`.
+All bounding box methods (`precision`, `recall`, `fullframe`, `bbox`) support `--sim ssim` (default), `--sim clip`, or `--sim dreamsim`. DreamSim requires `pip install dreamsim`.
 
 ## Single-method
 

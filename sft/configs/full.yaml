@@ -1,47 +1,28 @@
-### model
-model_name_or_path: Qwen/Qwen3-VL-8B-Instruct
-image_max_pixels: 262144
-video_max_pixels: 16384
-video_fps: 2.0
-video_maxlen: 64
-trust_remote_code: true
+model_id: Qwen/Qwen3-VL-8B-Instruct
 
-### method
-stage: sft
-do_train: true
-finetuning_type: full
-deepspeed: examples/deepspeed/ds_z3_config.json  # path to LLaMA-Factory DeepSpeed ZeRO-3 config
+# Output
+output_dir: checkpoints/full
+run_name: sft-full
+report_to: ["wandb"]
 
-### dataset
-dataset: anim2code_train
-eval_dataset: anim2code_val
-dataset_dir: sft/data   # path to directory containing dataset_info.json + train.json/val.json
-template: qwen3_vl_nothink
-cutoff_len: 16384
-preprocessing_num_workers: 8
-dataloader_num_workers: 2
-
-### output
-output_dir: checkpoints/full_sft   # set to your desired checkpoint directory
-logging_steps: 5
-save_strategy: epoch
-eval_strategy: epoch
-per_device_eval_batch_size: 1
-plot_loss: true
-overwrite_output_dir: true
-save_only_model: false
-report_to: wandb
-run_name: qwen3vl-8b-full-sft
-
-### train
-# effective batch = 1 × 4 × 2 GPUs = 8 (same as LoRA)
-# if OOM, reduce gradient_accumulation_steps to 2
+# Training schedule (full FT — smaller LR, more accumulation)
+epochs: 3
 per_device_train_batch_size: 1
-gradient_accumulation_steps: 4
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 16
 gradient_checkpointing: true
-learning_rate: 5.0e-6
-num_train_epochs: 3.0
+learning_rate: 1.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.03
 lr_scheduler_type: cosine
-warmup_ratio: 0.1
-bf16: true
-ddp_timeout: 180000000
+logging_steps: 10
+save_total_limit: 4
+
+# Vision tower stays frozen for full FT to fit in memory.
+freeze_vision: true
+
+# Data
+fps: 1.0
+max_pixels: 112896
+max_text_len: 4096
+dataloader_num_workers: 2

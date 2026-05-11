@@ -1,0 +1,13 @@
+model:
+  name: qwen3vl
+  model_id: Qwen/Qwen3-VL-8B-Instruct
+  fps: 8
+  max_pixels: 196608
+  max_new_tokens: 8192
+
+data:
+  local_dataset: ../_hf_staging/data/test
+
+output:
+  base_dir: qwen3vl/output
+  suffix: ""

@@ -3,9 +3,9 @@
 Run experimental pipeline variants.
 
 Usage:
-    python run_experiment.py baseline --config configs/config_qwen.yaml --start 0 --end 5
-    python run_experiment.py metric_guided --config configs/config_qwen.yaml --ids codepen-XXXX
-    python run_experiment.py all --config configs/config_qwen.yaml --start 0 --end 5
+    python run_experiment.py baseline --config configs/config.yaml --start 0 --end 5
+    python run_experiment.py describe_first --config configs/config.yaml --ids codepen-XXXX
+    python run_experiment.py all --config configs/config.yaml --start 0 --end 5
 """
 
 import argparse
@@ -19,32 +19,24 @@ import yaml
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parent.parent
+REPO_ROOT = ROOT.parent
 sys.path.insert(0, str(ROOT))
 
 from modules.logger import RunLogger
 from modules.models import get_model
 from modules.pipeline import Models, run_example
 from modules.pipeline_experiments import (
-    run_best_of_n,
     run_caption_bridge,
     run_describe_first,
     run_dual_critic,
-    run_metric_guided,
-    run_reward_gated,
-    run_rl_explore,
 )
 
 EXPERIMENTS = {
     "baseline": "Baseline iterative refinement",
-    "metric_guided": "Exp 1: DINO-guided critic",
-    "best_of_n": "Exp 2: Best-of-N sampling",
-    "reward_gated": "Exp 3: Reward-gated refinement",
-    "rl_explore": "Exp 4: RL exploration",
-    "describe_first": "Exp 5: Describe-first (ChartIR)",
-    "dual_critic": "Exp 6: Dual critic (METAL)",
-    "caption_bridge": "Exp 7: Caption bridge (PhyT2V)",
-    "all": "Run all experiments",
+    "describe_first": "Describe-first (ChartIR-based)",
+    "dual_critic": "Dual critic (METAL-based)",
+    "caption_bridge": "Caption bridge (PhyT2V-based)",
+    "all": "Run all four variants",
 }
 
 
@@ -70,7 +62,6 @@ def run_single_experiment(experiment, example_ids, dataset_dir, cfg, models, arg
         run_dir = ROOT / "output" / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # If skip-record, disable recorder by setting a flag in config
     if args.skip_record:
         cfg["recorder"]["skip"] = True
 
@@ -78,7 +69,6 @@ def run_single_experiment(experiment, example_ids, dataset_dir, cfg, models, arg
         yaml.dump(cfg, f)
     with open(run_dir / "experiment_info.json", "w") as f:
         json.dump({"experiment": experiment, "description": EXPERIMENTS[experiment],
-                    "n_samples": args.n_samples, "dino_device": args.dino_device,
                     "example_ids": example_ids}, f, indent=2)
 
     logger = RunLogger(run_dir, run_name)
@@ -103,27 +93,12 @@ def run_single_experiment(experiment, example_ids, dataset_dir, cfg, models, arg
         try:
             if experiment == "baseline":
                 trace = run_example(eid, gt_video, cfg, models, run_dir, logger)
-            elif experiment == "metric_guided":
-                trace = run_metric_guided(eid, gt_video, cfg, models, run_dir, logger,
-                                          dino_device=args.dino_device)
-            elif experiment == "best_of_n":
-                trace = run_best_of_n(eid, gt_video, cfg, models, run_dir, logger,
-                                      n_samples=args.n_samples, dino_device=args.dino_device)
-            elif experiment == "reward_gated":
-                trace = run_reward_gated(eid, gt_video, cfg, models, run_dir, logger,
-                                         dino_device=args.dino_device)
-            elif experiment == "rl_explore":
-                trace = run_rl_explore(eid, gt_video, cfg, models, run_dir, logger,
-                                       n_samples=args.n_samples, dino_device=args.dino_device)
             elif experiment == "describe_first":
-                trace = run_describe_first(eid, gt_video, cfg, models, run_dir, logger,
-                                           dino_device=args.dino_device)
+                trace = run_describe_first(eid, gt_video, cfg, models, run_dir, logger)
             elif experiment == "dual_critic":
-                trace = run_dual_critic(eid, gt_video, cfg, models, run_dir, logger,
-                                        dino_device=args.dino_device)
+                trace = run_dual_critic(eid, gt_video, cfg, models, run_dir, logger)
             elif experiment == "caption_bridge":
-                trace = run_caption_bridge(eid, gt_video, cfg, models, run_dir, logger,
-                                           dino_device=args.dino_device)
+                trace = run_caption_bridge(eid, gt_video, cfg, models, run_dir, logger)
 
             elapsed = round(time.time() - t0, 1)
             status = trace.get("status", "unknown")
@@ -163,8 +138,6 @@ def main():
     parser.add_argument("--end", type=int)
     parser.add_argument("--config", default=str(ROOT / "configs" / "config.yaml"))
     parser.add_argument("--max-iterations", type=int)
-    parser.add_argument("--n-samples", type=int, default=3)
-    parser.add_argument("--dino-device", default="cuda")
     parser.add_argument("--dataset-dir", default=str(REPO_ROOT / "dataset"))
     parser.add_argument("--skip-record", action="store_true",
                         help="Skip recording (generate code only, record locally later)")
@@ -186,7 +159,6 @@ def main():
     print(f"Found {len(example_ids)} examples")
     print(f"Experiment: {args.experiment} — {EXPERIMENTS[args.experiment]}")
 
-    # Initialize models
     gen_name = cfg["generator"]["model"]
     crt_name = cfg["critic"]["model"]
     edt_name = cfg["editor"]["model"]

@@ -1,41 +1,67 @@
 # SFT
 
-Supervised fine-tuning of Qwen3-VL-8B-Instruct on Animation2Code via [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory).
+Supervised fine-tuning of Qwen3-VL-8B-Instruct on the Animation2Code dataset using HuggingFace Trainer with Liger kernels.
 
 ## Setup
 
 ```bash
-pip install llamafactory deepspeed qwen-vl-utils
+pip install torch transformers peft liger-kernel qwen-vl-utils pyyaml tqdm datasets huggingface_hub
 ```
 
-## Data preparation
+Set `HF_TOKEN` in your environment if needed for private model/dataset access.
 
-Convert the dataset to LLaMA-Factory's ShareGPT format:
+## Data
 
-```bash
-python prepare_data.py \
-    --data-dir /path/to/dataset \
-    --output-dir sft/data
+Training data is loaded from `anim2code/anim2code-dev` (HuggingFace). Pass `--data-dir` to use a local copy:
+
 ```
-
-This writes `sft/data/train.json`, `sft/data/val.json`, and `sft/data/dataset_info.json`.
+data_dir/
+  train/
+    metadata.jsonl
+    videos/codepen-XXXX-yyyy.mp4
+  val/
+    metadata.jsonl
+    videos/...
+```
 
 ## Training
 
-Edit `configs/lora.yaml` or `configs/full.yaml` to set `dataset_dir` and `output_dir`, then:
-
 ```bash
-# LoRA (rank=64, lr=1e-4, 3 epochs)
-bash scripts/run_lora.sh configs/lora.yaml
+# LoRA (recommended for single GPU)
+bash sft/scripts/train.sh lora
 
-# Full-parameter (lr=5e-6, 3 epochs, DeepSpeed ZeRO-3)
-bash scripts/run_full.sh configs/full.yaml
+# Full fine-tuning (multi-GPU, vision encoder frozen)
+bash sft/scripts/train.sh full
+
+# Smoke test (1 step, no wandb)
+bash sft/scripts/train.sh lora --smoke --report-to none
+
+# With local data
+python sft/train.py --method lora --config sft/configs/lora.yaml --data-dir /path/to/data
 ```
 
-Both scripts use `FORCE_TORCHRUN=1` with `NPROC_PER_NODE=4`. Adjust to match your GPU count.
-
-Set `WANDB_API_KEY` in your environment (or `.env`) and `WANDB_PROJECT=anim2code-sft` for logging.
+Checkpoints are saved to `checkpoints/lora/` or `checkpoints/full/`.
 
 ## Inference
 
-After training, use the baseline inference scripts (`baselines/run.py`) with a config pointing to your checkpoint directory.
+```bash
+python sft/infer.py \
+    --run-type lora \
+    --checkpoint-dir checkpoints/lora \
+    --output-dir results/sft_lora \
+    --test-data-dir /path/to/dataset/test
+```
+
+Output layout: `results/sft_lora/<example_id>/full.html`.
+
+## Key config options
+
+| Key | Description |
+|-----|-------------|
+| `fps` | Video frames per second fed to the model |
+| `max_pixels` | Max visual tokens (lower = less GPU memory) |
+| `max_text_len` | Sequence truncation length |
+| `use_liger_kernel` | Enable Liger fused kernels (default: true) |
+| `lora.r` | LoRA rank |
+| `learning_rate` | Peak LR |
+| `epochs` | Training epochs |

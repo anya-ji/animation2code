@@ -5,7 +5,7 @@ Code release for "Animation2Code: Evaluating Temporal Visual Reasoning in Video-
 ## Structure
 
 ```
-baselines/            Inference for all baseline models (Gemini, GPT, Qwen3-VL, Claude, Molmo)
+baselines/            Inference for all baseline models (Gemini, GPT, Qwen3-VL, OpenRouter[Claude, Llama])
 sft/                  Supervised fine-tuning recipe (LoRA and full-parameter) via LLaMA-Factory
 iterative_refinement/ Four iterative refinement variants (baseline, describe_first, dual_critic, caption_bridge)
 recording/            Recording pipeline v2: HTML → MP4 via Puppeteer

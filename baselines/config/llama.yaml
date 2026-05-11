@@ -1,0 +1,14 @@
+model:
+  name: openrouter
+  model_id: meta-llama/llama-4-scout
+  image_sampling:
+    fps: 8
+  max_completion_tokens: 16384
+  temperature: 0
+
+data:
+  local_dataset: ../_hf_staging/data/test
+
+output:
+  base_dir: llama/output
+  suffix: ""

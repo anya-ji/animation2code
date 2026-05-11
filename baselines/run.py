@@ -120,9 +120,6 @@ def main():
     elif model_name == "gpt":
         from models.gpt import GptModel
         model = GptModel(config, logger)
-    elif model_name == "molmo":
-        from models.molmo import MolmoModel
-        model = MolmoModel(config, logger)
     elif model_name == "openrouter":
         from models.openrouter import OpenRouterModel
         model = OpenRouterModel(config, logger)

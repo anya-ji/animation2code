@@ -2,26 +2,98 @@
 
 An iterative loop that generates animation code from a video, records it, visually critiques it against the ground truth, and refines the code — repeating for N rounds.
 
-## Pipeline
-
-```
-ground truth video
-       │
-       ▼
-  [generator]  →  full.html  →  [recorder]  →  iter_0/animation.mp4
-                                                       │
-       ┌───────────────────────────────────────────────┘
-       ▼
-  [critic]  (gt video + iter_N video)  →  feedback.txt
-       │
-       ▼
-  [editor]  (feedback + current code)  →  full.html
-       │
-       ▼
-  [recorder]  →  iter_N+1/animation.mp4  →  repeat
-```
+## Pipelines
 
 Each stage uses a configurable model (`gemini` or `qwen3vl`).
+
+### baseline
+
+```
+gt video
+   │
+   ▼
+[generator] ──→ full.html ──→ [recorder] ──→ iter_0/animation.mp4
+                                                      │
+     ┌────────────────────────────────────────────────┘
+     ▼
+[critic]  (gt video + iter_N video) ──→ feedback.txt
+     │
+     ▼
+[editor]  (current code + feedback) ──→ full.html
+     │
+     ▼
+[recorder] ──→ iter_N+1/animation.mp4  →  repeat
+```
+
+### describe_first (ChartIR-based)
+
+iter_0 decouples visual understanding from code generation:
+
+```
+gt video
+   │
+   ├──→ [generator/describe] ──→ description.txt
+   │                                    │
+   └──────────────────────────────┐     │
+                                  ▼     ▼
+                           [generator/code]  (video + description) ──→ full.html
+                                  │
+                                  ▼
+                            [recorder] ──→ iter_0/animation.mp4
+```
+
+Refinement uses the original description as context for the critic:
+
+```
+[critic]  (gt video + iter_N video + original description) ──→ diff feedback
+     │
+     ▼
+[editor]  (current code + diff feedback + description) ──→ full.html
+     │
+     ▼
+[recorder] ──→ iter_N+1/animation.mp4  →  repeat
+```
+
+### dual_critic (METAL-based)
+
+iter_0 is the same as baseline. Refinement runs two critic passes:
+
+```
+[visual critic]  (gt video + iter_N video) ──→ visual_feedback.txt
+     │
+     ▼
+[code critic]   (visual feedback + current code, text only) ──→ code_feedback.txt
+     │
+     ▼
+[editor]  (current code + visual feedback + code feedback) ──→ full.html
+     │
+     ▼
+[recorder] ──→ iter_N+1/animation.mp4  →  repeat
+```
+
+### caption_bridge (PhyT2V-based)
+
+Target is captioned once before iter_0. Refinement compares captions as text (no video in the compare step):
+
+```
+gt video ──→ [captioner] ──→ target_caption.txt  (once, reused every iteration)
+```
+
+iter_0 is the same as baseline. Refinement:
+
+```
+iter_N video ──→ [captioner] ──→ generated_caption.txt
+                                          │
+              target_caption ─────────────┤
+                                          ▼
+                              [compare]  (text only) ──→ feedback.txt
+                                          │
+                                          ▼
+                              [editor]  (current code + feedback + target caption)
+                                          │
+                                          ▼
+                              [recorder] ──→ iter_N+1/animation.mp4  →  repeat
+```
 
 ## Setup
 
@@ -58,9 +130,9 @@ python run_experiment.py all --ids codepen-ABKVZX-AbRrvV
 | Name | Description |
 |------|-------------|
 | `baseline` | Standard generate → critique → edit loop |
-| `describe_first` | Describe animation in natural language before generating code (ChartIR-inspired) |
-| `dual_critic` | Separate visual critic + code critic, merge feedback (METAL-inspired) |
-| `caption_bridge` | Caption both videos as text, compare captions, edit from diff (PhyT2V-inspired) |
+| `describe_first` | Describe animation in natural language before generating code (ChartIR-based) |
+| `dual_critic` | Separate visual critic + code critic, merge feedback (METAL-based) |
+| `caption_bridge` | Caption both videos as text, compare captions, edit from diff (PhyT2V-based) |
 
 ## Configuration
 
@@ -72,9 +144,3 @@ Copy `configs/config.yaml` (Gemini) or `configs/config_qwen.yaml` (Qwen3-VL) and
 | `generator.model` / `critic.model` / `editor.model` | `gemini` or `qwen3vl` |
 | `recorder.fps` / `recorder.duration` | Recording parameters |
 
-## Visualizer
-
-```bash
-cd visualizer && node server.cjs
-# open http://localhost:8765
-```

@@ -1,0 +1,13 @@
+model:
+  name: gemini
+  model_id: gemini-3-flash-preview
+  fps: 5
+  media_resolution: MEDIA_RESOLUTION_MEDIUM
+  max_output_tokens: 8192
+
+data:
+  local_dataset: ../_hf_staging/data/test
+
+output:
+  base_dir: gemini/output
+  suffix: ""

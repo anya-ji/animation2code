@@ -10,7 +10,26 @@ Inference pipelines for all baseline models on the Animation2Code test set.
 | `models/gpt.py` | OpenAI GPT (API) | frames |
 | `models/openrouter.py` | OpenRouter (API) | frames |
 | `models/qwen3vl.py` | Qwen3-VL-8B (local GPU) | video or frames |
-| `models/molmo.py` | Molmo (local GPU) | video |
+
+## Dataset
+
+Configs expect the dataset at `_hf_staging/data/test/` relative to the repo root:
+
+```
+_hf_staging/
+  data/
+    test/
+      metadata.jsonl
+      videos/
+        codepen-XXXX-yyyy.mp4
+        ...
+```
+
+Download from HuggingFace:
+```bash
+huggingface-cli download anim2code/anim2code-dev --repo-type dataset \
+    --include "data/test/*" --local-dir _hf_staging
+```
 
 ## Setup
 
@@ -34,7 +53,14 @@ cd recording && npm install
 
 ```bash
 # From baselines/
-python run.py --config config/gemini.yaml
+python run.py --config config/gemini.yaml   # Gemini
+python run.py --config config/gpt.yaml      # GPT (OpenAI)
+python run.py --config config/claude.yaml   # Claude (OpenRouter)
+python run.py --config config/llama.yaml    # LLaMA (OpenRouter)
+python run.py --config config/qwen3vl.yaml  # Qwen3-VL (local GPU)
+
+# From repo root:
+python baselines/run.py --config baselines/config/gemini.yaml
 python run.py --config config/qwen3vl.yaml
 
 # Subset
