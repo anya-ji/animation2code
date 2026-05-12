@@ -22,11 +22,135 @@ from PIL import Image
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from _utils import load_frames, find_changing_bbox, crop_frames
-from _motion_fidelity import (
-    frames_to_tensor, resize_tensor, upscale_tensor, match_video_sizes,
-    subsample_frames, load_video, adapt_grid_size,
-    compute_first_appearance_queries, get_tracklets, motion_fidelity_score,
-)
+
+
+def frames_to_tensor(frames: list[np.ndarray], device: str) -> torch.Tensor:
+    arr = np.stack(frames)  # (T, H, W, 3)
+    return torch.from_numpy(arr).permute(0, 3, 1, 2)[None].float().to(device)
+
+
+def resize_tensor(video: torch.Tensor, new_h: int, new_w: int) -> torch.Tensor:
+    _, _, _, H, W = video.shape
+    if H == new_h and W == new_w:
+        return video
+    flat = F.interpolate(video[0], size=(new_h, new_w), mode="bilinear", align_corners=False)
+    return flat[None]
+
+
+def upscale_tensor(video: torch.Tensor, min_side: int) -> torch.Tensor:
+    _, _, _, H, W = video.shape
+    short = min(H, W)
+    if short >= min_side:
+        return video
+    scale = min_side / short
+    new_h, new_w = round(H * scale), round(W * scale)
+    return resize_tensor(video, new_h, new_w)
+
+
+def match_video_sizes(
+    v1: torch.Tensor, f1: list[np.ndarray],
+    v2: torch.Tensor, f2: list[np.ndarray],
+) -> tuple[torch.Tensor, list[np.ndarray], torch.Tensor, list[np.ndarray]]:
+    """Downscale the larger of two (1,T,C,H,W) videos so both share the same H,W."""
+    _, _, _, H1, W1 = v1.shape
+    _, _, _, H2, W2 = v2.shape
+    if H1 == H2 and W1 == W2:
+        return v1, f1, v2, f2
+    tH, tW = min(H1, H2), min(W1, W2)
+    if H1 != tH or W1 != tW:
+        v1 = resize_tensor(v1, tH, tW)
+        f1 = [np.array(Image.fromarray(f).resize((tW, tH), Image.BILINEAR)) for f in f1]
+    if H2 != tH or W2 != tW:
+        v2 = resize_tensor(v2, tH, tW)
+        f2 = [np.array(Image.fromarray(f).resize((tW, tH), Image.BILINEAR)) for f in f2]
+    return v1, f1, v2, f2
+
+
+def subsample_frames(frames: list[np.ndarray], max_frames: int) -> list[np.ndarray]:
+    """Uniformly subsample to at most max_frames frames."""
+    n = len(frames)
+    if n <= max_frames:
+        return frames
+    indices = [round(i * (n - 1) / (max_frames - 1)) for i in range(max_frames)]
+    return [frames[i] for i in indices]
+
+
+def load_video(
+    video_path: Path, device: str, use_bbox: bool, min_track_side: int,
+    max_frames: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, list[np.ndarray], tuple | None]:
+    frames = load_frames(str(video_path))
+    if max_frames is not None and len(frames) > max_frames:
+        frames = subsample_frames(frames, max_frames)
+    original = frames_to_tensor(frames, device)
+    if use_bbox:
+        bbox = find_changing_bbox(frames, square=True)
+        track_frames = crop_frames(frames, bbox)
+    else:
+        bbox = None
+        track_frames = frames
+    cropped = frames_to_tensor(track_frames, device)
+    track_vid = upscale_tensor(cropped, min_track_side)
+    _, _, _, H, W = track_vid.shape
+    if (track_frames[0].shape[0], track_frames[0].shape[1]) != (H, W):
+        track_frames = [
+            np.array(Image.fromarray(f).resize((W, H), Image.BILINEAR))
+            for f in track_frames
+        ]
+    return original, track_vid, track_frames, bbox
+
+
+def adapt_grid_size(H: int, W: int, max_grid_size: int) -> int:
+    return max(3, round(max_grid_size * min(H, W) / 512))
+
+
+def compute_first_appearance_queries(
+    frames: list[np.ndarray], threshold: int, grid_size: int, device: str
+) -> tuple[torch.Tensor | None, np.ndarray | None]:
+    base = frames[0].astype(np.float32)
+    H, W = base.shape[:2]
+    T = len(frames)
+    first_frame = np.full((H, W), T, dtype=np.int32)
+    for t in range(1, T):
+        diff = np.abs(frames[t].astype(np.float32) - base).max(axis=-1)
+        newly = (diff > threshold) & (first_frame == T)
+        first_frame[newly] = t
+    cell_h = H / grid_size
+    cell_w = W / grid_size
+    queries_list = []
+    for row in range(grid_size):
+        for col in range(grid_size):
+            y0, y1 = int(row * cell_h), int((row + 1) * cell_h)
+            x0, x1 = int(col * cell_w), int((col + 1) * cell_w)
+            cell = first_frame[y0:y1, x0:x1]
+            if cell.min() >= T:
+                continue
+            ly, lx = np.unravel_index(np.argmin(cell), cell.shape)
+            y, x = y0 + ly, x0 + lx
+            queries_list.append([float(first_frame[y, x]), float(x), float(y)])
+    if not queries_list:
+        return None, None
+    q_arr = np.array(queries_list, dtype=np.float32)
+    queries = torch.from_numpy(q_arr)[None].to(device)  # (1, N, 3)
+    query_frames = q_arr[:, 0].astype(int)              # (N,)
+    return queries, query_frames
+
+
+def get_tracklets(model, video: torch.Tensor, queries: torch.Tensor, backward: bool = False):
+    return model(video, queries=queries, backward_tracking=backward)
+
+
+def motion_fidelity_score(sim: torch.Tensor) -> dict:
+    """Chamfer-style bidirectional score from a (N_gt, N_pred) similarity matrix."""
+    gt_to_pred, _ = sim.max(dim=1)    # (N_gt,)
+    pred_to_gt, _ = sim.max(dim=0)    # (N_pred,)
+    average = (gt_to_pred.mean() + pred_to_gt.mean()) / 2
+    return {
+        "average_score": float(average.item()),
+        "min_score":     float(gt_to_pred.min().item()),
+        "max_score":     float(gt_to_pred.max().item()),
+        "std_score":     float(gt_to_pred.std().item()),
+    }
 
 
 def get_similarity_matrix(
