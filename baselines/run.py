@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""
-Run baseline inference for a given model config.
-
-Usage:
-    python run.py --config config/gemini.yaml
-    python run.py --config config/gemini.yaml --start 0 --end 10
-    python run.py --config config/gemini.yaml --ids codepen-xxx codepen-yyy
-    python run.py --config config/gemini.yaml --output-dir gemini/output/20260318_123456  # resume
-"""
+"""Run baseline inference for a model config, writing <run_dir>/<id>/full.html."""
 import argparse
 import logging
 import shutil
@@ -57,7 +49,6 @@ def main():
     suffix = str(config.get("output", {}).get("suffix", "")).strip()
     run_name = f"{timestamp}_{suffix}" if suffix else timestamp
 
-    # Start logging in the model's own folder, derived from output.base_dir when available
     _base_dir_cfg = config.get("output", {}).get("base_dir", "")
     _log_root = Path(_base_dir_cfg).parts[0] if _base_dir_cfg else model_name
     log_dir = BASELINES_DIR / _log_root / "logs"
@@ -67,7 +58,6 @@ def main():
     logger.info("Config:  %s", config_path)
     logger.info("Model:   %s", model_name)
 
-    # Build or reuse run directory
     if args.output_dir:
         run_dir = Path(args.output_dir).resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -76,12 +66,10 @@ def main():
         run_dir = base_dir / run_name
         run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save config snapshot into run dir
     shutil.copy(config_path, run_dir / "_config.yaml")
 
     logger.info("Output:  %s", run_dir)
 
-    # Load examples
     from shared.dataloader import load_examples
     examples, get_video_path = load_examples(config["data"])
 
@@ -91,7 +79,6 @@ def main():
     else:
         examples = examples[args.start : args.end]
 
-    # When resuming, skip already-processed examples
     if args.output_dir:
         remaining = [
             e for e in examples
@@ -110,7 +97,6 @@ def main():
         logger.info("Nothing to process.")
         return
 
-    # Instantiate and run model
     if model_name == "gemini":
         from models.gemini import GeminiModel
         model = GeminiModel(config, logger)
@@ -136,7 +122,6 @@ if __name__ == "__main__":
         main()
     except Exception:
         import traceback
-        # If logger was set up, use it; otherwise fall back to stderr
         try:
             logging.getLogger("baseline").exception("Fatal error")
         except Exception:

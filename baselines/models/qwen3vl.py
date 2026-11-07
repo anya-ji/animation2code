@@ -8,37 +8,8 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
 from shared.parsing import parse_response
+from shared.prompts import SYSTEM_PROMPT, USER_PROMPT, USER_PROMPT_IMAGES
 from shared.video_sampler import sample_frames
-
-SYSTEM_PROMPT = """You are an expert web developer specializing in CSS animations and JavaScript.
-Your task is to analyze an animation video and generate the HTML/CSS/JavaScript code that recreates it.
-Focus on accuracy - match the timing, easing, colors, and movement as closely as possible."""
-
-USER_PROMPT = """Watch this animation video carefully and generate the complete code to recreate it.
-
-Provide your response as a single, complete HTML document only.
-Include all CSS inside <style> tags and any JavaScript inside <script> tags.
-Keep the code concise — avoid generating hundreds of repetitive CSS rules.
-
-Be precise about:
-- Animation duration and timing functions
-- Colors and gradients
-- Transform properties (rotate, scale, translate)
-- Keyframe percentages
-- Any JavaScript timing or interactions"""
-
-USER_PROMPT_IMAGES = """Watch this animation carefully (shown as a sequence of frames) and generate the complete code to recreate it.
-
-Provide your response as a single, complete HTML document only.
-Include all CSS inside <style> tags and any JavaScript inside <script> tags.
-Keep the code concise — avoid generating hundreds of repetitive CSS rules.
-
-Be precise about:
-- Animation duration and timing functions
-- Colors and gradients
-- Transform properties (rotate, scale, translate)
-- Keyframe percentages
-- Any JavaScript timing or interactions"""
 
 
 class Qwen3VLModel:
@@ -48,6 +19,8 @@ class Qwen3VLModel:
         self.model_id = m["model_id"]
         self.max_pixels = m.get("max_pixels", 512 * 384)
         self.max_new_tokens = m.get("max_new_tokens", 8192)
+        # qwen_vl_utils clamps to 4 frames by default, which overrides low fps such as 0.5.
+        self.min_frames = m.get("min_frames")
         self._model = None
         self._processor = None
 
@@ -70,17 +43,20 @@ class Qwen3VLModel:
         self.logger.info("Model loaded. GPUs: %d", torch.cuda.device_count())
 
     def _generate(self, video_path: Path) -> tuple[str, int]:
+        video_ele = {
+            "type": "video",
+            "video": str(video_path),
+            "max_pixels": self.max_pixels,
+            "fps": self.fps,
+        }
+        if self.min_frames is not None:
+            video_ele["min_frames"] = self.min_frames
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "video",
-                        "video": str(video_path),
-                        "max_pixels": self.max_pixels,
-                        "fps": self.fps,
-                    },
+                    video_ele,
                     {"type": "text", "text": USER_PROMPT},
                 ],
             },
@@ -193,7 +169,6 @@ class Qwen3VLModel:
             )
 
         ok, err = 0, 0
-        start_time = time.time()
 
         pbar = tqdm(examples, desc="inference", unit="ex")
         for i, name in enumerate(pbar):

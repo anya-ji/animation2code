@@ -5,35 +5,21 @@ from openai import OpenAI
 from tqdm import tqdm
 
 from shared.parsing import parse_response
+from shared.prompts import SYSTEM_PROMPT, USER_PROMPT_IMAGES
 from shared.video_sampler import frames_to_base64, sample_frames
 
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env", override=True)
-
-SYSTEM_PROMPT = """You are an expert web developer specializing in CSS animations and JavaScript.
-Your task is to analyze an animation video and generate the HTML/CSS/JavaScript code that recreates it.
-Focus on accuracy - match the timing, easing, colors, and movement as closely as possible."""
-
-USER_PROMPT = """Watch this animation carefully (shown as a sequence of frames) and generate the complete code to recreate it.
-
-Provide your response as a single, complete HTML document only.
-Include all CSS inside <style> tags and any JavaScript inside <script> tags.
-Keep the code concise — avoid generating hundreds of repetitive CSS rules.
-
-Be precise about:
-- Animation duration and timing functions
-- Colors and gradients
-- Transform properties (rotate, scale, translate)
-- Keyframe percentages
-- Any JavaScript timing or interactions"""
 
 MIME = {"JPEG": "image/jpeg", "PNG": "image/png"}
 
 
 class GptModel:
+    label = "GPT"
+
     def __init__(self, config: dict, logger):
         self.logger = logger
         m = config["model"]
-        self.model_id = m.get("model_id", "gpt-5.4-mini")
+        self.model_id = m["model_id"]
         self.max_completion_tokens = m.get("max_completion_tokens", 16384)
         self.temperature = m.get("temperature", 0)
 
@@ -42,13 +28,16 @@ class GptModel:
         self.img_fmt = sampling.get("format", "JPEG").upper()
         self.img_quality = sampling.get("quality", 90)
 
-        self.client = OpenAI()
+        self.client = self._make_client()
+
+    def _make_client(self) -> OpenAI:
+        return OpenAI()
 
     def run(self, examples: list[str], get_video_path, run_dir: Path):
         ok, err = 0, 0
         self.logger.info(
-            "GPT inference: model=%s  image_fps=%s  max_completion_tokens=%s  temperature=%s",
-            self.model_id, self.fps, self.max_completion_tokens, self.temperature,
+            "%s inference: model=%s  image_fps=%s  max_completion_tokens=%s  temperature=%s",
+            self.label, self.model_id, self.fps, self.max_completion_tokens, self.temperature,
         )
 
         pbar = tqdm(examples, desc="inference", unit="ex")
@@ -62,7 +51,7 @@ class GptModel:
                 b64_frames = frames_to_base64(frames, fmt=self.img_fmt, quality=self.img_quality)
                 mime = MIME[self.img_fmt]
 
-                content = [{"type": "text", "text": USER_PROMPT}]
+                content = [{"type": "text", "text": USER_PROMPT_IMAGES}]
                 for b64 in b64_frames:
                     content.append({
                         "type": "image_url",

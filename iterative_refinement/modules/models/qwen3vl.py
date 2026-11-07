@@ -1,19 +1,15 @@
-"""
-Qwen3-VL model implementation using HuggingFace Transformers.
+"""Qwen3-VL model using Hugging Face Transformers.
 
-Model is loaded once per model_id and cached at module level — if generator,
-critic, and editor all specify the same model_id, only one copy is loaded.
+Each model_id is loaded once and cached, so stages sharing a model share one copy.
+Critique calls pass both videos as separate items in the message.
 
-For multi-video inputs (critique stage), both videos are passed as separate
-video items in the message content list.
-
-Config keys (from config.yaml generator/critic/editor.qwen3vl block):
-  model_id       : e.g. "Qwen/Qwen3-VL-8B-Instruct"
-  fps            : frames-per-second to sample from each video
-  max_pixels     : pixel budget per frame (e.g. 112896 = 336*336)
-  max_new_tokens : max tokens to generate
-  temperature    : float
-  top_p          : float
+Config keys:
+  model_id: e.g. "Qwen/Qwen3-VL-8B-Instruct"
+  fps: Frames per second sampled from each video
+  max_pixels: Pixel budget per frame, e.g. 112896 = 336*336
+  max_new_tokens: Maximum tokens to generate
+  temperature: Sampling temperature
+  top_p: Nucleus sampling threshold
 """
 
 import gc
@@ -30,7 +26,6 @@ _MODEL_CACHE: dict[str, tuple] = {}
 def _load_model(model_id: str):
     """Load and cache a Qwen3VL model. Returns (model, processor)."""
     if model_id not in _MODEL_CACHE:
-        import torch
         from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
         print(f"[qwen3vl] Loading model: {model_id}")
@@ -54,7 +49,6 @@ class Qwen3VLModel(BaseModel):
         self.max_new_tokens = int(cfg.get("max_new_tokens", 8192))
         self.temperature = float(cfg.get("temperature", 0.2))
         self.top_p = float(cfg.get("top_p", 0.9))
-        # Model is loaded lazily on first call via _get_model()
         self._model = None
         self._processor = None
 
@@ -109,14 +103,11 @@ class Qwen3VLModel(BaseModel):
             clean_up_tokenization_spaces=False,
         )[0]
 
-        # Free GPU memory from this batch
         del inputs, output_ids, generated_ids
         gc.collect()
         torch.cuda.empty_cache()
 
         return response
-
-    # ── BaseModel interface ───────────────────────────────────────────────
 
     def generate_code(
         self,

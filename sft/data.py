@@ -1,17 +1,10 @@
-"""
-HF dataset loader for anim2code SFT.
+"""Dataset and collator for fine-tuning Qwen3-VL on (video, HTML) pairs.
 
-Reads `anim2code/anim2code-dev` data/{split}/metadata.jsonl + data/{split}/videos/*.mp4
-Each example becomes a chat-formatted (video, html) pair.
+Each example becomes a chat with the video and prompt as input and the HTML as the assistant reply.
 """
-import json
-import os
 from pathlib import Path
-from typing import Iterable
 
-import torch
 from torch.utils.data import Dataset
-
 
 SYSTEM_PROMPT = (
     "You are an expert web developer specializing in CSS animations and JavaScript. "
@@ -26,33 +19,39 @@ USER_PROMPT = (
 )
 
 
-def load_split(local_dir: Path, split: str) -> list[dict]:
-    """Read metadata.jsonl for a split and resolve video paths."""
-    meta_path = local_dir / split / "metadata.jsonl"
+def load_split(data_dir: Path, split: str) -> list[dict]:
+    """Load one split.
+
+    Args:
+        data_dir: Directory containing <split>/<id>/animation.mp4 and full.html.
+        split: "train" or "val".
+
+    Returns:
+        List of dicts with id, video_path and full_html, sorted by id.
+    """
     examples = []
-    with open(meta_path) as f:
-        for line in f:
-            row = json.loads(line)
-            video_path = local_dir / split / row["file_name"]
-            if not video_path.exists():
-                continue
+    for example_dir in sorted((data_dir / split).iterdir()):
+        video = example_dir / "animation.mp4"
+        html = example_dir / "full.html"
+        if video.exists() and html.exists():
             examples.append({
-                "id": row["id"],
-                "video_path": str(video_path),
-                "full_html": row["full_html"],
+                "id": example_dir.name,
+                "video_path": str(video),
+                "full_html": html.read_text(encoding="utf-8"),
             })
     return examples
 
 
 class AnimSFTDataset(Dataset):
-    """
-    Wraps a list of (video, full_html) pairs.
+    """Return each example as chat messages.
 
-    __getitem__ returns the messages list in chat format. Tokenization +
-    video preprocessing happens in the collator so we can keep this
-    process-fork friendly.
-    """
+    Tokenization and video decoding happen in the collator, so dataloader workers stay light.
 
+    Args:
+        examples: Output of load_split.
+        fps: Frames per second sampled from each video.
+        max_pixels: Pixel budget per frame.
+    """
     def __init__(self, examples: list[dict], fps: float = 1.0, max_pixels: int = 112896):
         self.examples = examples
         self.fps = float(fps)
@@ -75,32 +74,28 @@ class AnimSFTDataset(Dataset):
 
 
 class Collator:
-    """
-    Apply Qwen3-VL's chat template + processor on a batch.
+    """Turn a list of examples into one batch.
 
-    Loss is computed only on assistant tokens (everything else is masked to -100).
+    Applies the chat template, decodes the videos and tokenizes. Labels are -100 everywhere except
+    assistant tokens, so the loss only covers the generated HTML.
+
+    Args:
+        processor: Qwen3-VL processor.
+        max_text_len: Sequences longer than this are truncated, video tokens included.
     """
 
     def __init__(self, processor, max_text_len: int = 16384):
         self.processor = processor
         self.max_text_len = int(max_text_len)
-        try:
-            self.assistant_token_ids = self.processor.tokenizer.encode(
-                "<|im_start|>assistant\n", add_special_tokens=False
-            )
-        except AttributeError:
-            self.assistant_token_ids = None
 
     def __call__(self, batch: list[dict]) -> dict:
         from qwen_vl_utils import process_vision_info
 
         all_msgs = [b["messages"] for b in batch]
-        # Full chat = with assistant content (target).
         texts_full = [
             self.processor.apply_chat_template(m, tokenize=False, add_generation_prompt=False)
             for m in all_msgs
         ]
-        # Prefix = same chat but stop at the assistant turn (so we know where labels start).
         texts_prefix = [
             self.processor.apply_chat_template(m[:-1], tokenize=False, add_generation_prompt=True)
             for m in all_msgs
@@ -108,7 +103,7 @@ class Collator:
         image_inputs, video_inputs, video_kwargs = process_vision_info(
             all_msgs, return_video_kwargs=True
         )
-        # qwen_vl_utils 0.0.10+ returns fps as a list; the processor wants a float.
+        # qwen_vl_utils returns fps as a list; the processor wants a float.
         if isinstance(video_kwargs.get("fps"), list):
             fps = video_kwargs["fps"]
             video_kwargs["fps"] = float(fps[0]) if fps else 1.0
@@ -123,7 +118,6 @@ class Collator:
             return_tensors="pt",
             **video_kwargs,
         )
-        # Build label mask: only assistant tokens contribute to loss.
         labels = inputs["input_ids"].clone()
         for i, prefix_text in enumerate(texts_prefix):
             prefix_ids = self.processor.tokenizer(
@@ -131,7 +125,6 @@ class Collator:
             )["input_ids"][0]
             n = min(prefix_ids.shape[0], labels.shape[1])
             labels[i, :n] = -100
-        # Mask padding too.
         if "attention_mask" in inputs:
             labels[inputs["attention_mask"] == 0] = -100
         inputs["labels"] = labels

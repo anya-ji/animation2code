@@ -1,24 +1,23 @@
 # Animation2Code
 
-Code release for "Animation2Code: Evaluating Temporal Visual Reasoning in Video-to-Code Generation".
+Code for [Animation2Code: Evaluating Temporal Visual Reasoning in Video-to-Code Generation](https://arxiv.org/abs/2606.28593).
 
-## Structure
-
-```
-baselines/            Inference for all baseline models (Gemini, GPT, Qwen3-VL, OpenRouter[Claude, Llama])
-sft/                  Supervised fine-tuning recipe (LoRA and full-parameter) via LLaMA-Factory
-iterative_refinement/ Four iterative refinement variants (baseline, describe_first, dual_critic, caption_bridge)
-recording/            Recording pipeline v2: HTML → MP4 via Puppeteer
-evaluation/           Evaluation suite (precision, recall, fullframe, bbox, temporal_fidelity, tsed)
-```
-
-Each directory has its own README with setup instructions and usage examples.
+| Folder | Contents |
+|---|---|
+| [`recording/`](recording) | Deterministic HTML-to-MP4 recorder |
+| [`baselines/`](baselines) | Zero-shot inference for Gemini, GPT, Claude, LLaMA and Qwen3-VL |
+| [`sft/`](sft) | LoRA and full supervised fine-tuning of Qwen3-VL |
+| [`iterative_refinement/`](iterative_refinement) | Four iterative refinement variants |
+| [`evaluation/`](evaluation) | Appearance, temporal and supporting metrics |
 
 ## Dataset
 
-The dataset will be made available on HuggingFace.
+Download the [dataset](https://huggingface.co/datasets/anim2code/dataset) from the repo root. The code expects it in `anim2code_data/`.
 
-Each example has:
-- `animation.mp4` — ground-truth animation video
-- `full.html` — source HTML/CSS/JS code
-- `metadata.jsonl` — id, category, title, url
+```bash
+hf download anim2code/dataset --repo-type dataset --local-dir anim2code_data
+```
+
+Each example is `anim2code_data/data/{train,val,test}/<id>/` with `animation.mp4`, `full.html` and `metadata.json`.
+
+Run the commands in each folder's README from that folder.

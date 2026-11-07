@@ -1,17 +1,5 @@
-"""
-Shared utilities for evaluation methods.
-
-Provides:
-  - load_frames: decode all frames from an mp4 into numpy arrays
-  - is_static_video: return True if no pixels change across frames
-  - find_changing_bbox: find the tightest square bounding box of pixels
-                        that change across video frames
-  - crop_frames: crop a region from a list of frames
-  - compute_ssim: compute SSIM between two grayscale image arrays
-  - mean_ssim_over_frames: average SSIM across aligned frame pairs
-  - build_ssim_distance_matrix: full n×m SSIM distance matrix for DTW
-  - clip_embeddings: extract L2-normalised CLIP embeddings per frame
-  - build_clip_distance_matrix: full n×m cosine distance matrix via CLIP
+"""Shared helpers for the evaluation methods: frame loading, animated-region detection, and
+SSIM, CLIP and DreamSim similarity.
 """
 
 import cv2
@@ -23,9 +11,13 @@ _dreamsim_cache: dict = {}
 
 
 def load_frames(video_path: str) -> list[np.ndarray]:
-    """Decode all frames from a video file.
+    """Decode all frames from a video.
 
-    Returns a list of HxWx3 uint8 numpy arrays (RGB).
+    Args:
+        video_path: Path to the video.
+
+    Returns:
+        List of HxWx3 uint8 RGB arrays.
     """
     frames = []
     cap = cv2.VideoCapture(video_path)
@@ -40,9 +32,12 @@ def load_frames(video_path: str) -> list[np.ndarray]:
 
 
 def is_static_video(frames: list[np.ndarray]) -> bool:
-    """Return True if no pixels change across frames (video is static).
+    """Return True if no pixel changes across frames.
 
-    Uses the same noise threshold as find_changing_bbox (>10 in any channel).
+    Uses the same threshold as find_changing_bbox: more than 10 in any channel.
+
+    Args:
+        frames: List of HxWx3 uint8 arrays.
     """
     if len(frames) < 2:
         return True
@@ -55,20 +50,17 @@ def is_static_video(frames: list[np.ndarray]) -> bool:
 
 
 def find_changing_bbox(frames: list[np.ndarray], square: bool = True) -> tuple[int, int, int, int]:
-    """Find the bounding box of pixels that change across all frames.
+    """Find the bounding box of pixels that change across a video.
 
-    Compares every frame against the first frame, builds a union mask of
-    pixels that differ in any channel by more than a small threshold, then
-    returns the tightest rectangle around that mask.
+    Compares every frame with the first, marks pixels that differ by more than 10 in any channel,
+    and returns the tightest box around them.
 
     Args:
-        frames:  list of HxWx3 uint8 arrays.
-        square:  if True, expand the rectangle into the tightest enclosing
-                 square (centered on the rectangle).
+        frames: List of HxWx3 uint8 arrays.
+        square: Expand the box to the tightest enclosing square, centered on the box.
 
     Returns:
-        (x1, y1, x2, y2)  pixel coordinates (inclusive start, exclusive end).
-        Returns full-frame bbox if no changing pixels are found.
+        (x1, y1, x2, y2) with inclusive start and exclusive end, or the full frame if nothing changes.
     """
     if not frames:
         raise ValueError("frames list is empty")
@@ -76,20 +68,16 @@ def find_changing_bbox(frames: list[np.ndarray], square: bool = True) -> tuple[i
     h, w = frames[0].shape[:2]
     ref = frames[0].astype(np.int16)
 
-    # Accumulate a mask where any frame differs from the first frame
     change_mask = np.zeros((h, w), dtype=bool)
     for frame in frames[1:]:
         diff = np.abs(frame.astype(np.int16) - ref)
-        # A pixel "changed" if any channel moved by more than noise threshold
         changed = diff.max(axis=2) > 10
         change_mask |= changed
 
-    # Find rows/cols that contain at least one changed pixel
     rows = np.where(change_mask.any(axis=1))[0]
     cols = np.where(change_mask.any(axis=0))[0]
 
     if len(rows) == 0 or len(cols) == 0:
-        # No motion detected – fall back to full frame
         return 0, 0, w, h
 
     y1, y2 = int(rows[0]), int(rows[-1]) + 1
@@ -98,12 +86,10 @@ def find_changing_bbox(frames: list[np.ndarray], square: bool = True) -> tuple[i
     if not square:
         return x1, y1, x2, y2
 
-    # Expand to the tightest enclosing square
     box_w = x2 - x1
     box_h = y2 - y1
     side = max(box_w, box_h)
 
-    # Centre the square on the rectangle's centre
     cx = (x1 + x2) // 2
     cy = (y1 + y2) // 2
 
@@ -139,16 +125,13 @@ def to_grayscale(frame: np.ndarray) -> np.ndarray:
 
 
 def compute_ssim(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute SSIM between two grayscale float32 arrays.
-
-    Uses the standard SSIM formula with stabilisation constants
-    c1 = (0.01)^2, c2 = (0.03)^2 (data range = 1.0).
+    """Compute SSIM between two grayscale images, with c1 = 0.01^2 and c2 = 0.03^2.
 
     Args:
-        a, b: 2-D float32 arrays of the same shape, values in [0, 1].
+        a, b: 2-D float32 arrays of the same shape, with values in [0, 1].
 
     Returns:
-        SSIM scalar in [-1, 1].
+        SSIM in [-1, 1].
     """
     mu_a = a.mean()
     mu_b = b.mean()
@@ -177,15 +160,14 @@ def mean_ssim_over_frames(
     frames_b: list[np.ndarray],
     bbox: tuple[int, int, int, int] | None = None,
 ) -> tuple[float, list[float]]:
-    """Compute per-frame SSIM between two frame lists, return mean and list.
+    """Compute SSIM for each frame pair, truncating to the shorter list.
 
-    Truncates to the shorter of the two lists. Resizes frames_b to match
-    frames_a dimensions if they differ.
+    Frames in frames_b are resized to match frames_a if needed.
 
     Args:
-        frames_a: first list of HxWx3 uint8 RGB frames.
-        frames_b: second list of HxWx3 uint8 RGB frames.
-        bbox:     (x1, y1, x2, y2) crop region; None = full frame.
+        frames_a: List of HxWx3 uint8 RGB frames.
+        frames_b: List of HxWx3 uint8 RGB frames.
+        bbox: (x1, y1, x2, y2) crop region; None uses the full frame.
 
     Returns:
         (mean_score, per_frame_scores)
@@ -215,31 +197,25 @@ def mean_ssim_over_frames(
     return mean, scores
 
 
-# ─── DTW distance matrices ───────────────────────────────────────────────────
-
-
 def build_ssim_distance_matrix(
     frames_a: list[np.ndarray],
     frames_b: list[np.ndarray],
     bbox: tuple[int, int, int, int] | None = None,
     device: str = "cpu",
 ) -> np.ndarray:
-    """Build a full n×m SSIM distance matrix for use with DTW.
+    """Build the n×m SSIM distance matrix used by DTW.
 
-    D[i, j] = 1 - SSIM(frames_a[i], frames_b[j]) cropped to bbox.
-    Values are clamped to [0, 1].
-
-    When device is not 'cpu', uses batched PyTorch operations on the GPU:
-    the covariance term is computed via a single matrix multiply (A @ B.T),
-    making the n×m build O(n*m*P) on CUDA rather than O(n*m) sequential CPU calls.
+    D[i, j] = 1 - SSIM(frames_a[i], frames_b[j]), clamped to [0, 1]. On a GPU device the matrix is
+    computed in one batch.
 
     Args:
-        frames_a: first list of frames.
-        frames_b: second list of frames.
-        bbox:     (x1, y1, x2, y2) crop region; None = full frame.
-        device:   torch device string ('cpu', 'cuda', 'cuda:0', …).
+        frames_a: First list of frames.
+        frames_b: Second list of frames.
+        bbox: (x1, y1, x2, y2) crop region; None uses the full frame.
+        device: Torch device string, such as "cpu" or "cuda:0".
 
-    Returns float32 array of shape (n, m).
+    Returns:
+        float32 array of shape (n, m).
     """
     n, m = len(frames_a), len(frames_b)
     if n == 0 or m == 0:
@@ -276,10 +252,9 @@ def _build_ssim_distance_matrix_gpu(
     bbox: tuple[int, int, int, int] | None,
     device: str,
 ) -> np.ndarray:
-    """GPU-batched SSIM distance matrix via PyTorch.
+    """Compute the SSIM distance matrix on a GPU in one batch.
 
-    Converts all frames to grayscale float32 tensors, then computes the full
-    n×m SSIM matrix in one shot using a matrix multiply for the covariance term.
+    The covariance term comes from a single matrix multiply, A @ B.T.
     """
     import torch
 
@@ -315,16 +290,12 @@ def _build_ssim_distance_matrix_gpu(
     return D.cpu().numpy().astype(np.float32)
 
 
-# ─── CLIP utilities ───────────────────────────────────────────────────────────
-
-
 def _get_clip(device: str = "cpu"):
     """Lazily load and cache a CLIP ViT-B/32 model and processor."""
     if device not in _clip_cache:
         from transformers import CLIPModel, CLIPProcessor
         processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-        import torch
         model = model.to(device).eval()
         _clip_cache[device] = (model, processor)
     return _clip_cache[device]
@@ -335,17 +306,15 @@ def clip_embeddings(
     bbox: tuple[int, int, int, int] | None = None,
     device: str = "cpu",
 ) -> np.ndarray:
-    """Extract L2-normalised CLIP visual embeddings for each frame.
-
-    Optionally crops each frame to bbox before embedding.
+    """Extract L2-normalized CLIP embeddings for each frame.
 
     Args:
-        frames: list of HxWx3 uint8 RGB arrays.
-        bbox:   (x1, y1, x2, y2) crop region; None = full frame.
-        device: torch device string.
+        frames: List of HxWx3 uint8 RGB arrays.
+        bbox: (x1, y1, x2, y2) crop region; None uses the full frame.
+        device: Torch device string.
 
     Returns:
-        (n, 512) float32 array of L2-normalised embeddings.
+        (n, 512) float32 array.
     """
     import torch
     from PIL import Image as PILImage
@@ -379,9 +348,6 @@ def check_video_fps(video_path: str, expected_fps: float = 30.0, tol: float = 0.
     return abs(fps - expected_fps) <= tol
 
 
-# ─── DreamSim utilities ───────────────────────────────────────────────────────
-
-
 def _get_dreamsim(device: str = "cpu"):
     """Lazily load and cache a DreamSim model and preprocessor."""
     if device not in _dreamsim_cache:
@@ -398,7 +364,6 @@ def _dreamsim_embeddings(
 ) -> "torch.Tensor":
     """Extract DreamSim embeddings for each frame. Returns a (n, D) CPU tensor."""
     import torch
-    import torch.nn.functional as F
     from PIL import Image as PILImage
 
     model, preprocess = _get_dreamsim(device)
@@ -441,12 +406,18 @@ def build_dreamsim_distance_matrix(
     bbox: tuple[int, int, int, int] | None = None,
     device: str = "cpu",
 ) -> np.ndarray:
-    """Build a full n×m DreamSim cosine-distance matrix for use with DTW.
+    """Build the n×m DreamSim cosine distance matrix used by DTW.
 
-    D[i, j] = 1 - cosine_similarity(embed_a[i], embed_b[j]), clamped to [0, 1].
-    Lower = more similar (consistent with SSIM/CLIP distance matrices).
+    D[i, j] = 1 - cosine_similarity(embed_a[i], embed_b[j]), clamped to [0, 1]. Lower is more similar.
 
-    Returns float32 array of shape (n, m).
+    Args:
+        frames_a: First list of frames.
+        frames_b: Second list of frames.
+        bbox: (x1, y1, x2, y2) crop region; None uses the full frame.
+        device: Torch device string.
+
+    Returns:
+        float32 array of shape (n, m).
     """
     import torch
     import torch.nn.functional as F
@@ -471,11 +442,15 @@ def mean_dreamsim_over_frames(
     bbox: tuple[int, int, int, int] | None = None,
     device: str = "cpu",
 ) -> tuple[float, list[float]]:
-    """Compute per-frame DreamSim similarity between two aligned frame lists.
+    """Compute DreamSim similarity for each frame pair, truncating to the shorter list.
 
-    Uses model(img_a, img_b) per the official API, which returns a perceptual
-    distance. Similarity = 1 - distance (higher is better, range ≈ [0, 1]).
-    Truncates to the shorter list.
+    Similarity is 1 - the model's perceptual distance, so higher is better.
+
+    Args:
+        frames_a: First list of frames.
+        frames_b: Second list of frames.
+        bbox: (x1, y1, x2, y2) crop region; None uses the full frame.
+        device: Torch device string.
 
     Returns:
         (mean_score, per_frame_scores)
@@ -515,12 +490,18 @@ def build_clip_distance_matrix(
     bbox: tuple[int, int, int, int] | None = None,
     device: str = "cpu",
 ) -> np.ndarray:
-    """Build a full n×m cosine distance matrix using CLIP embeddings for DTW.
+    """Build the n×m CLIP cosine distance matrix used by DTW.
 
-    D[i, j] = 1 - cosine_similarity(frames_a[i], frames_b[j]) in bbox.
-    Values are clamped to [0, 1].
+    D[i, j] = 1 - cosine_similarity(frames_a[i], frames_b[j]), clamped to [0, 1].
 
-    Returns float32 array of shape (n, m).
+    Args:
+        frames_a: First list of frames.
+        frames_b: Second list of frames.
+        bbox: (x1, y1, x2, y2) crop region; None uses the full frame.
+        device: Torch device string.
+
+    Returns:
+        float32 array of shape (n, m).
     """
     emb_a = clip_embeddings(frames_a, bbox, device)
     emb_b = clip_embeddings(frames_b, bbox, device)

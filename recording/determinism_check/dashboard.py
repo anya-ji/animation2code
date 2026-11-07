@@ -1,11 +1,6 @@
-"""
-Side-by-side determinism dashboard.
-Reads comparison.csv and serves run1 vs run2 videos.
-Filter by identical column; defaults to false (different videos only).
+"""Dashboard for comparing videos from two runs side by side.
 
-Run:
-    uv run python data_processing/video_processing/v2/determinism_check/dashboard.py
-Then open http://localhost:5500
+Reads determinism_comparison.csv and shows non-identical examples by default.
 """
 
 import csv
@@ -241,7 +236,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/video":
             rel = query.get("path", [""])[0]
             abs_path = os.path.normpath(os.path.join(SCRIPT_DIR, rel))
-            # Only allow paths inside the v2 output directory
+            # Only allow paths inside the output directory
             allowed = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "output"))
             if not abs_path.startswith(allowed):
                 self.send_error(403)

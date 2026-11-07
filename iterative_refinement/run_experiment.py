@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-Run experimental pipeline variants.
-
-Usage:
-    python run_experiment.py baseline --config configs/config.yaml --start 0 --end 5
-    python run_experiment.py describe_first --config configs/config.yaml --ids codepen-XXXX
-    python run_experiment.py all --config configs/config.yaml --start 0 --end 5
-"""
+"""Run one or all refinement variants over a dataset split."""
 
 import argparse
 import json
@@ -138,7 +131,7 @@ def main():
     parser.add_argument("--end", type=int)
     parser.add_argument("--config", default=str(ROOT / "configs" / "config.yaml"))
     parser.add_argument("--max-iterations", type=int)
-    parser.add_argument("--dataset-dir", default=str(REPO_ROOT / "dataset"))
+    parser.add_argument("--dataset-dir", default=str(REPO_ROOT / "anim2code_data" / "data" / "test"))
     parser.add_argument("--skip-record", action="store_true",
                         help="Skip recording (generate code only, record locally later)")
     parser.add_argument("--run-dir", default=None,

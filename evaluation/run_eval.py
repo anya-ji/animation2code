@@ -1,32 +1,8 @@
-"""
-Batch evaluation invoke script.
+"""Run evaluation methods over every (render, gold) pair in two directories and save the scores.
 
-Discovers matching pairs across result and gold directories, runs one or more
-evaluation methods on each pair, and writes results to a file.
-
-Video methods (precision, recall, fullframe, bbox, temporal_fidelity):
-  Pair discovery looks for video files in result_dir subdirectories and matches
-  them against gold_dir.  DTW alignment is ON by default; use --without-dtw
-  to compare frames at matching indices instead.
-
-Code methods (tsed, tsed_tripart):
-  Pair discovery looks for full.html in result_dir subdirectories and matches
-  against {gold-html-dir}/{name}.html.  Use extract_gold_html.py to build the
-  gold HTML directory from metadata.jsonl.  No DTW.
-
-Output formats: csv (default) or json.
-
-Usage:
-    # Video metrics
-    uv run python evaluation/run_eval.py \\
-        --result-dir <path> --gold-dir <path> \\
-        --method precision,recall,fullframe,bbox \\
-        --outpath results.json --format json
-
-    # Code metric
-    uv run python evaluation/run_eval.py \\
-        --result-dir <path> --gold-html-dir <path> \\
-        --method tsed --outpath results.json --format json
+Video methods match <result_dir>/<id>/<video> against <gold_dir>/<id>/<video>, and use DTW unless
+--without-dtw is set. Code methods match <result_dir>/<id>/full.html against
+<gold_html_dir>/<id>/full.html. Results are written as CSV or JSON.
 """
 
 import argparse
@@ -35,7 +11,6 @@ import json
 import sys
 from pathlib import Path
 
-# Make the evaluation package importable regardless of cwd
 sys.path.insert(0, str(Path(__file__).parent))
 
 import methods.bbox as bbox_method
@@ -56,10 +31,8 @@ AVAILABLE_METHODS = {
     "tsed_tripart": tsed_tripart_method.run,
 }
 
-# Methods that operate on HTML files rather than videos
 HTML_METHODS = {"tsed", "tsed_tripart"}
 
-# CSV columns written for each row
 CSV_FIELDNAMES = ["name", "method", "score", "extra_json", "render_path", "gold_path"]
 
 
@@ -69,18 +42,19 @@ def discover_pairs(
     gold_filename: str | None = None,
     render_filename: str | None = None,
 ) -> list[dict]:
-    """Find matching video pairs between result_dir and gold_dir.
+    """Find matching video pairs.
 
-    Supports two layouts:
-      - Nested: result_dir/{name}/animation.mp4  ↔  gold_dir/{name}/animation.mp4
-      - Flat:   result_dir/{name}.mp4            ↔  gold_dir/{name}.mp4
+    Supports result_dir/<id>/animation.mp4 with gold_dir/<id>/animation.mp4, and flat
+    result_dir/<id>.mp4 with gold_dir/<id>.mp4.
 
-    gold_filename: when provided, use this as the sole gold filename candidate
-    instead of the default list ("animation.mp4", "original.mp4").
-    render_filename: when provided, use this as the sole render filename candidate
-    instead of the default list ("animation.mp4", "generated.mp4", "output.mp4").
+    Args:
+        result_dir: Directory of rendered videos.
+        gold_dir: Directory of gold videos.
+        gold_filename: Gold filename; by default tries animation.mp4, then original.mp4.
+        render_filename: Render filename; by default tries animation.mp4, generated.mp4, then output.mp4.
 
-    Returns a sorted list of dicts with keys: name, render_path, gold_path.
+    Returns:
+        Sorted list of dicts with name, render_path and gold_path.
     """
     result_root = Path(result_dir)
     gold_root = Path(gold_dir)
@@ -90,7 +64,6 @@ def discover_pairs(
 
     for entry in sorted(result_root.iterdir()):
         if entry.is_dir():
-            # Nested layout — try multiple naming conventions
             render_mp4 = None
             for rname in render_candidates:
                 candidate = entry / rname
@@ -106,7 +79,6 @@ def discover_pairs(
                     gold_mp4 = candidate
                     break
             if gold_mp4 is None:
-                # Try flat layout in gold dir
                 flat = gold_root / f"{entry.name}.mp4"
                 if flat.exists():
                     gold_mp4 = flat
@@ -114,7 +86,6 @@ def discover_pairs(
                 continue
             name = entry.name
         elif entry.suffix == ".mp4":
-            # Flat layout: file is already the video
             render_mp4 = entry
             gold_mp4 = gold_root / entry.name
             name = entry.stem
@@ -134,12 +105,14 @@ def discover_pairs(
 
 
 def discover_html_pairs(result_dir: str, gold_html_dir: str) -> list[dict]:
-    """Find matching HTML pairs for code-similarity methods (e.g. tsed).
+    """Find matching HTML pairs for code similarity methods.
 
-    Render:  result_dir/{name}/full.html
-    Gold:    gold_html_dir/{name}.html
+    Args:
+        result_dir: Directory of <id>/full.html renders.
+        gold_html_dir: Directory of <id>/full.html gold files.
 
-    Returns a sorted list of dicts with keys: name, render_path, gold_path.
+    Returns:
+        Sorted list of dicts with name, render_path and gold_path.
     """
     result_root = Path(result_dir)
     gold_root = Path(gold_html_dir)
@@ -150,7 +123,7 @@ def discover_html_pairs(result_dir: str, gold_html_dir: str) -> list[dict]:
         render_html = entry / "full.html"
         if not render_html.exists():
             continue
-        gold_html = gold_root / f"{entry.name}.html"
+        gold_html = gold_root / entry.name / "full.html"
         if not gold_html.exists():
             continue
         pairs.append({
@@ -173,11 +146,7 @@ def build_record(name: str, method: str, render_path: str, gold_path: str, resul
 
 
 def record_to_csv_row(record: dict) -> dict:
-    """Flatten a result record into a single CSV row.
-
-    The primary scalar is 'score' for all methods.
-    Everything else goes into extra_json.
-    """
+    """Flatten a result record into one CSV row, with everything except score in extra_json."""
     method = record["method"]
 
     if method == "tsed":
@@ -202,7 +171,7 @@ def record_to_csv_row(record: dict) -> dict:
             extra["dtw_path"] = record.get("dtw_path")
             extra["n_render_frames"] = record.get("n_render_frames")
             extra["n_gold_frames"] = record.get("n_gold_frames")
-    else:  # precision, recall, fullframe
+    else:
         score = record.get("score")
         extra = {
             "per_frame": record.get("per_frame") or record.get("per_frame_dtw"),
@@ -253,8 +222,7 @@ def main():
     parser.add_argument("--result-dir", required=True, help="Directory of render outputs")
     parser.add_argument("--gold-dir", default=None, help="Directory of gold videos (video methods)")
     parser.add_argument("--gold-html-dir", default=None,
-                        help="Directory of gold HTML files named {name}.html (tsed method). "
-                             "Build with: uv run python evaluation/extract_gold_html.py")
+                        help="Directory of <example>/full.html files (code methods)")
     parser.add_argument(
         "--method",
         default="precision,recall,fullframe",
@@ -325,7 +293,6 @@ def main():
         )
         sys.exit(1)
 
-    # Separate HTML vs video methods (can't mix in one invocation)
     html_methods = [m for m in methods if m in HTML_METHODS]
     video_methods = [m for m in methods if m not in HTML_METHODS]
     if html_methods and video_methods:
@@ -335,7 +302,7 @@ def main():
     if html_methods:
         if not args.gold_html_dir:
             print("--gold-html-dir is required for tsed. "
-                  "Run: uv run python evaluation/extract_gold_html.py --help", file=sys.stderr)
+                  "Use the dataset's test split directory.", file=sys.stderr)
             sys.exit(1)
         pairs = discover_html_pairs(args.result_dir, args.gold_html_dir)
         if not pairs:
@@ -355,7 +322,6 @@ def main():
         print(f"Found {len(pairs)} example(s). Running: {methods}")
         print(f"  DTW: {'disabled' if not with_dtw else f'enabled (criterion: {args.sim})'}")
 
-    # FPS validation — log errors but continue processing
     if not html_methods:
         from methods._utils import check_video_fps
         for pair in pairs:
@@ -368,7 +334,6 @@ def main():
                     print(f"ERROR: expected 30 fps but got {actual:.1f} fps: {pair[key]}",
                           file=sys.stderr)
 
-    # Pre-load CoTracker model once if needed (temporal_fidelity)
     _mf_model = None
     if "temporal_fidelity" in methods:
         import torch
@@ -376,7 +341,6 @@ def main():
         _mf_model = torch.hub.load("facebookresearch/co-tracker", "cotracker3_offline")
         _mf_model = _mf_model.to(args.device).eval()
 
-    # Pre-load DreamSim once if needed (warm the module-level cache)
     if args.sim == "dreamsim" and not html_methods:
         from methods._utils import _get_dreamsim
         print("Loading DreamSim...")
@@ -384,7 +348,6 @@ def main():
 
     from tqdm import tqdm
 
-    # Load existing results to support resume (skip already-done pairs)
     records = []
     done_set: set[tuple[str, str]] = set()
     if not args.overwrite and Path(args.outpath).exists() and args.format == "json":
@@ -437,7 +400,6 @@ def main():
             suffix = f" [{skip}]" if skip else ""
             tqdm.write(f"{scalar:.4f}{suffix}" if scalar is not None else f"done{suffix}")
 
-        # Write incrementally after each pair that produced new results
         if pair_had_new:
             if args.format == "json":
                 write_json(args.outpath, records)

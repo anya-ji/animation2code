@@ -1,14 +1,17 @@
-"""
-Temporal fidelity evaluation using CoTracker3.
+"""Measure how similar two animations move, independent of how they look (the paper's temporal metric).
 
-Extends motion_fidelity by combining direction cosine similarity with
-speed similarity (min/max displacement magnitude ratio). This captures
-both the direction and pace of motion, improving agreement with human
-temporal quality judgments (ROC-AUC 0.731 vs 0.637 for direction-only).
+Steps:
+  1. Crop each video to its own animated square and downscale the larger crop to match.
+  2. In each cell of a grid, pick the pixel that changes first and start a track there, at that frame.
+  3. Track the points with CoTracker3.
+  4. Score each pair of tracks by comparing their frame-to-frame displacements.
+  5. Match tracks in both directions (Chamfer) and average.
 
-Score = 0.5 * direction_cosine + 0.5 * speed_similarity
-Speed similarity per timestep: min(|d1|, |d2|) / max(|d1|, |d2|) ∈ [0, 1]
-Score range: [-0.5, 1.0] (1 = identical motion, 0 = orthogonal/speed mismatch)
+Pair score = 0.5 * direction + 0.5 * speed, averaged from the earlier track's start, where:
+  direction = cosine similarity of the displacements
+  speed = min(|d1|, |d2|) / max(|d1|, |d2|)
+
+Scores range from -0.5 to 1, where 1 is identical motion.
 """
 import warnings
 from pathlib import Path
@@ -157,11 +160,18 @@ def get_similarity_matrix(
     tracklets1: torch.Tensor, tracklets2: torch.Tensor,
     qt1: np.ndarray, qt2: np.ndarray,
 ) -> torch.Tensor:
-    """0.5 * direction_cosine + 0.5 * speed_similarity (min/max ratio).
+    """Score every pair of tracks as 0.5 * direction + 0.5 * speed.
 
-    Direction cosine: cosine similarity of frame-to-frame displacement vectors.
-    Speed similarity: min(|d1|, |d2|) / max(|d1|, |d2|) per timestep ∈ [0, 1].
-    Both are averaged over the union active window (same denominator as MF baseline).
+    Displacements before a track's first appearance count as zero, so timing mismatches lower the score.
+
+    Args:
+        tracklets1: (N1, T, 2) gold tracks.
+        tracklets2: (N2, T, 2) predicted tracks.
+        qt1: (N1,) first-appearance frame of each gold track.
+        qt2: (N2,) first-appearance frame of each predicted track.
+
+    Returns:
+        (N1, N2) similarity matrix.
     """
     d1 = tracklets1[:, 1:] - tracklets1[:, :-1]  # (N1, T_steps, 2)
     d2 = tracklets2[:, 1:] - tracklets2[:, :-1]  # (N2, T_steps, 2)
@@ -206,26 +216,28 @@ def run(
     use_bbox: bool = True,
     model=None,
 ) -> dict:
-    """
-    Compute temporal fidelity between a rendered video and a gold reference.
-
-    Combines direction cosine similarity with speed similarity (min/max ratio)
-    at each timestep: score = 0.5 * direction + 0.5 * speed.
+    """Compute temporal fidelity between a render and a gold video.
 
     Args:
-        render_path:      Path to the predicted/rendered video.
-        gold_path:        Path to the ground-truth video.
-        device:           Torch device ("cpu" or "cuda").
-        motion_threshold: Pixel-value diff threshold for first-appearance queries.
-        grid_size:        Base NxN grid density (scaled by crop resolution).
-        min_track_side:   Upscale crops to at least this many px before tracking.
-        max_frames:       Uniformly subsample both videos to at most this many frames.
-        backward:         Enable CoTracker backward tracking pass.
-        model:            Pre-loaded CoTracker model; loaded from torch.hub if None.
+        render_path: Path to the rendered video.
+        gold_path: Path to the gold video.
+        device: Torch device.
+        motion_threshold: Pixel change that counts as a first appearance.
+        grid_size: Grid density at 512 px, scaled with crop size.
+        min_track_side: Upscale crops to at least this many pixels before tracking.
+        max_frames: Subsample each video to at most this many frames; None uses all frames.
+        backward: Also track backward in time.
+        use_bbox: Crop each video to its animated square.
+        model: Loaded CoTracker model; loaded from torch.hub if None.
 
-    Returns dict with keys: score, min_score, max_score, std_score, gt_n_tracks,
-    pred_n_tracks, gt_frames, pred_frames, shared_track_shape, motion_threshold,
-    grid_size, max_frames.
+    Returns a dict with:
+        score: Temporal similarity. None if the GPU ran out of memory.
+        min_score, max_score, std_score: Per-track statistics in the gold-to-render direction.
+        gt_n_tracks, pred_n_tracks: Tracks in each video.
+        gt_frames, pred_frames: Frames in each video.
+        shared_track_shape: [height, width] used for tracking.
+        motion_threshold, grid_size, max_frames, mask_type, query_mode: Settings used.
+        skip_reason: Present when scoring was skipped, e.g. no_animated_pixels_pred (score is 0).
     """
     if model is None:
         model = torch.hub.load("facebookresearch/co-tracker", "cotracker3_offline")
@@ -308,3 +320,15 @@ def run(
         "mask_type":          "motion" if use_bbox else "none",
         "query_mode":         "first_appearance",
     }
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("render")
+    parser.add_argument("gold")
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    args = parser.parse_args()
+    print(json.dumps(run(args.render, args.gold, device=args.device), indent=2))

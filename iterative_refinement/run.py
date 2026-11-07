@@ -1,24 +1,11 @@
 #!/usr/bin/env python3
-"""
-Iterative Refinement — entry point.
+"""Run the baseline refinement loop over a dataset split.
 
-Reads config.yaml, resolves examples, instantiates models, and runs the
-pipeline for each example. Outputs go to output/<run_id>/.
-
-Usage:
-    python run.py                                         # all examples in dataset
-    python run.py --ids codepen-ABKVZX-AbRrvV            # specific examples
-    python run.py --start 0 --end 10                     # index slice
-    python run.py --config my_config.yaml                # custom config
-    python run.py --dataset-dir /path/to/dataset         # override dataset path
-    python run.py --gemini-fps 10                        # override fps for all gemini stages
-    python run.py --test-set path/to/metadata.jsonl      # restrict to test set IDs only
+Reads the config, picks examples, loads the models and writes results to output/<run_id>/.
 """
 
 import argparse
 import json
-import os
-import shutil
 import sys
 import time
 from datetime import datetime
@@ -27,29 +14,9 @@ from pathlib import Path
 import yaml
 from tqdm import tqdm
 
-# ── Paths ─────────────────────────────────────────────────────────────────
 
 EXPERIMENT_DIR = Path(__file__).parent.resolve()
-REPO_ROOT = EXPERIMENT_DIR.parent.parent
-V3_NODE_MODULES = REPO_ROOT / "data_processing" / "video_processing" / "v3" / "node_modules"
-LOCAL_NODE_MODULES = EXPERIMENT_DIR / "node_modules"
-
-
-# ── Setup ─────────────────────────────────────────────────────────────────
-
-def ensure_node_modules():
-    """Symlink v3's node_modules here so recorder.js can find puppeteer-capture."""
-    if LOCAL_NODE_MODULES.exists():
-        return
-    if not V3_NODE_MODULES.exists():
-        print(
-            f"ERROR: node_modules not found at {V3_NODE_MODULES}\n"
-            "Run `npm install` inside data_processing/video_processing/v3/ first.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    os.symlink(V3_NODE_MODULES, LOCAL_NODE_MODULES)
-    print(f"Created node_modules symlink → {V3_NODE_MODULES}")
+REPO_ROOT = EXPERIMENT_DIR.parent
 
 
 def load_config(config_path: Path) -> dict:
@@ -57,12 +24,14 @@ def load_config(config_path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-# ── Dataset discovery ─────────────────────────────────────────────────────
-
 def find_examples(dataset_dir: Path) -> list[tuple[str, Path]]:
-    """
-    Return sorted list of (example_id, gt_video_path) for all examples
-    in dataset_dir that have an animation.mp4.
+    """List the examples that have a video.
+
+    Args:
+        dataset_dir: Directory containing <id>/animation.mp4.
+
+    Returns:
+        Sorted list of (example_id, video_path).
     """
     results = []
     for d in sorted(dataset_dir.iterdir()):
@@ -72,8 +41,6 @@ def find_examples(dataset_dir: Path) -> list[tuple[str, Path]]:
                 results.append((d.name, mp4))
     return results
 
-
-# ── Model instantiation ───────────────────────────────────────────────────
 
 def build_models(cfg: dict):
     """Instantiate generator, critic, and editor models from config."""
@@ -100,8 +67,6 @@ def build_models(cfg: dict):
     )
 
 
-# ── Main ──────────────────────────────────────────────────────────────────
-
 def main():
     parser = argparse.ArgumentParser(description="Iterative refinement pipeline")
     parser.add_argument("--config", default="configs/config.yaml", help="Path to config YAML")
@@ -114,27 +79,21 @@ def main():
                         help="Override fps for all gemini stage configs")
     parser.add_argument("--include-target-video", action="store_true", default=None,
                         help="Override editor.include_target_video to True")
-    parser.add_argument("--test-set", metavar="METADATA_JSONL",
-                        help="Path to metadata.jsonl; restricts examples to those IDs only")
     args = parser.parse_args()
 
-    # ── Load config ───────────────────────────────────────────────────────
     config_path = Path(args.config)
     if not config_path.is_absolute():
         config_path = EXPERIMENT_DIR / config_path
     cfg = load_config(config_path)
 
-    # Apply --gemini-fps override to all stages that use gemini
     if args.gemini_fps is not None:
         for stage in ("generator", "critic", "editor"):
             if "gemini" in cfg.get(stage, {}):
                 cfg[stage]["gemini"]["fps"] = args.gemini_fps
 
-    # Apply --include-target-video override
     if args.include_target_video:
         cfg["editor"]["include_target_video"] = True
 
-    # ── Resolve dataset dir ───────────────────────────────────────────────
     if args.dataset_dir:
         dataset_dir = Path(args.dataset_dir)
     else:
@@ -143,7 +102,6 @@ def main():
         print(f"ERROR: dataset dir not found: {dataset_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # ── Resolve output dir ────────────────────────────────────────────────
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.output_dir:
         run_dir = Path(args.output_dir)
@@ -151,13 +109,8 @@ def main():
         run_dir = EXPERIMENT_DIR / "output" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Setup ─────────────────────────────────────────────────────────────
-    ensure_node_modules()
-
-    # Save the effective config (post CLI-overrides) so each run is self-documenting
     (run_dir / "config.yaml").write_text(yaml.dump(cfg, default_flow_style=False), encoding="utf-8")
 
-    # ── Logging ───────────────────────────────────────────────────────────
     from modules.logger import RunLogger
     logger = RunLogger(run_dir, run_id)
     logger.info("=== iterative refinement run %s ===", run_id)
@@ -165,19 +118,7 @@ def main():
     logger.info("Dataset:  %s", dataset_dir)
     logger.info("Output:   %s", run_dir)
 
-    # ── Examples ──────────────────────────────────────────────────────────
     all_examples = find_examples(dataset_dir)
-
-    # Filter to test set IDs if --test-set is given
-    if args.test_set:
-        test_ids = set()
-        with open(args.test_set, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    test_ids.add(json.loads(line)["id"])
-        all_examples = [(eid, vp) for eid, vp in all_examples if eid in test_ids]
-        logger.info("Test set filter: %d examples", len(all_examples))
 
     if args.ids:
         id_set = set(args.ids)
@@ -202,13 +143,11 @@ def main():
         logger.warning("No examples found — exiting")
         return
 
-    # ── Instantiate models ────────────────────────────────────────────────
     logger.info("Instantiating models...")
     from modules.pipeline import run_example
     models = build_models(cfg)
     logger.info("Models ready")
 
-    # ── Run pipeline ──────────────────────────────────────────────────────
     results = []
     start_time = time.time()
 
@@ -227,7 +166,6 @@ def main():
         ok = sum(1 for r in results if r["status"] == "success")
         pbar.set_postfix(ok=ok, err=len(results) - ok)
 
-    # ── Summary ───────────────────────────────────────────────────────────
     elapsed = round(time.time() - start_time, 1)
     successes = [r for r in results if r["status"] == "success"]
     errors = [r for r in results if r["status"] != "success"]

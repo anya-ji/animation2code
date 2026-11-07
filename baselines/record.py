@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
-"""
-Record animation.mp4 for each full.html in a model run output directory.
+"""Record animation.mp4 for each full.html in a run directory.
 
-Wraps data_processing/video_processing/v2/record.js with session support.
-When --sessions > 1, spawns parallel screen sessions; otherwise runs directly.
-
-Usage:
-    python record.py --input gemini/output/20260318_123456 --recorder /path/to/v2/record.js
-    python record.py --input gemini/output/20260318_123456 --recorder /path/to/v2/record.js \\
-        --sessions 4 --concurrency 2
-    python record.py --input gemini/output/20260318_123456 --recorder /path/to/v2/record.js --rewrite
+Wraps recording/record.js. With --sessions > 1 it starts parallel screen sessions;
+otherwise it runs in the foreground.
 """
 import argparse
 import subprocess
@@ -23,8 +16,8 @@ def main():
         help="Model run dir containing per-example subdirs with full.html",
     )
     parser.add_argument(
-        "--recorder", required=True,
-        help="Path to data_processing/video_processing/v2/record.js",
+        "--recorder", default=str(Path(__file__).resolve().parent.parent / "recording" / "record.js"),
+        help="Path to record.js",
     )
     parser.add_argument(
         "--sessions", type=int, default=1,

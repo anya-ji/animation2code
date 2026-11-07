@@ -1,12 +1,9 @@
-"""
-Abstract base class for all models used in the iterative refinement pipeline.
+"""Interface for the models used by the pipeline, implemented in gemini.py and qwen3vl.py.
 
-Each stage of the pipeline calls a different method:
-  - generate_code   : initial code generation from a ground-truth video
-  - critique        : compare two videos and produce actionable feedback
-  - edit_code       : apply feedback (and optional target video) to update code
-
-Concrete implementations live in gemini.py and qwen3vl.py.
+Each stage calls one method:
+  generate_code: Generate code from a gold video.
+  critique: Compare two videos and produce feedback.
+  edit_code: Apply feedback to the code.
 """
 
 from abc import ABC, abstractmethod
@@ -26,16 +23,15 @@ class BaseModel(ABC):
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        """
-        Watch a single video and generate HTML/CSS/JS code.
+        """Watch a video and generate HTML/CSS/JS code.
 
         Args:
-            video_path:    Path to the ground-truth animation MP4.
-            system_prompt: Role/persona instruction for the model.
-            user_prompt:   Task instruction appended after the video.
+            video_path: Path to the gold video.
+            system_prompt: Role instruction for the model.
+            user_prompt: Task instruction, placed after the video.
 
         Returns:
-            Raw model response text (may include markdown fences).
+            Raw response text, which may include markdown fences.
         """
         ...
 
@@ -47,17 +43,16 @@ class BaseModel(ABC):
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        """
-        Compare a target animation to the current generated attempt.
+        """Compare the target animation with the current attempt.
 
         Args:
-            target_video:    Ground-truth animation MP4.
-            generated_video: Current iteration's recorded animation MP4.
-            system_prompt:   Role/persona instruction.
-            user_prompt:     Task instruction appended after both videos.
+            target_video: Path to the gold video.
+            generated_video: Path to the current iteration's video.
+            system_prompt: Role instruction for the model.
+            user_prompt: Task instruction, placed after both videos.
 
         Returns:
-            Raw model response text describing visual differences and fixes.
+            Raw response text describing the differences and fixes.
         """
         ...
 
@@ -70,17 +65,16 @@ class BaseModel(ABC):
         user_prompt: str,
         target_video: Path | None = None,
     ) -> str:
-        """
-        Revise code based on critic feedback.
+        """Revise code based on critic feedback.
 
         Args:
-            current_code:  The full HTML document from the previous iteration.
-            feedback:      Parsed critic text describing what to fix.
-            system_prompt: Role/persona instruction.
-            user_prompt:   Task instruction (will contain code + feedback).
-            target_video:  Optional ground-truth video for reference context.
+            current_code: HTML document from the previous iteration.
+            feedback: Parsed critic text describing what to fix.
+            system_prompt: Role instruction for the model.
+            user_prompt: Task instruction, containing the code and feedback.
+            target_video: Optional gold video for reference.
 
         Returns:
-            Raw model response text containing the revised HTML document.
+            Raw response text containing the revised HTML document.
         """
         ...

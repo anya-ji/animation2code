@@ -1,33 +1,13 @@
-"""
-METHOD: TSED-Tripart (Tripartite Tree Similarity of Edit Distance)
+"""TSED computed separately on the HTML, CSS and JavaScript of each file.
 
-Improves on tsed.py by splitting each HTML file into three independent
-subtrees — HTML skeleton, CSS, JavaScript — and parsing each with its
-native tree-sitter grammar before running APTED.
+Plain TSED treats <style> and <script> contents as single leaf nodes, so 500 lines of CSS look the
+same as none. This parses each part with its own grammar, then averages the three scores:
 
-Original TSED treats <style> and <script> contents as single opaque leaf
-nodes (raw_text), so 500 lines of CSS keyframes look identical to 0 lines.
-Tripartite TSED makes all three layers visible to the edit-distance scorer.
+    weight_i = nodes_i / (html_nodes + css_nodes + js_nodes)
+    score = sum(weight_i * tsed_i)
 
-Score in [0, 1]: 1 = identical, 0 = completely dissimilar.
-
-Combination strategy: content-proportional weighted average.
-  weight_i = nodes_i / (html_nodes + css_nodes + js_nodes)
-  final_score = sum(weight_i * tsed_i)
-
-If a subtree exceeds MAX_NODES_CSS / MAX_NODES_JS, APTED is skipped for
-that component and a token-Jaccard fallback is used instead (reported in
-the result so callers know which pairs hit the cap).
-
-APTED timing reference (Python, cross-comparison):
-  ~350 nodes:   ~2s
-  ~635 nodes:   ~9s (self-comparison / easy case)
-  ~4000 nodes: ~55s  → far too slow for batch
-
-Weights used for APTED: deletion=1.0, insertion=0.8, rename=1.0
-
-Usage (standalone):
-    uv run python evaluation/methods/tsed_tripart.py render.html gold.html
+Scores range from 0 to 1. APTED gets very slow on large trees (about 55 s at 4000 nodes), so a part
+over its node cap falls back to token Jaccard similarity, which the result reports.
 """
 
 import argparse
@@ -43,14 +23,12 @@ from tree_sitter_language_pack import get_parser, SupportedLanguage
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from methods.tsed import _parse_tree_string, Node
 
-# ─── tuneable limits ─────────────────────────────────────────────────────────
 MAX_NODES_CSS = 800   # APTED cap for CSS subtrees
 MAX_NODES_JS  = 800   # APTED cap for JS subtrees
 MAX_NODES_HTML = 400  # APTED cap for stripped HTML skeleton
 
 _APTED_CFG = PerEditOperationConfig(1.0, 0.8, 1.0)
 
-# ─── extraction helpers ──────────────────────────────────────────────────────
 
 def _extract_css(html: str) -> str:
     return "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.DOTALL | re.IGNORECASE))
@@ -59,8 +37,6 @@ def _extract_css(html: str) -> str:
 def _extract_js(html: str) -> str:
     return "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", html, re.DOTALL | re.IGNORECASE))
 
-
-# ─── parsing helpers ─────────────────────────────────────────────────────────
 
 def _parse_lang(source: str, lang: SupportedLanguage) -> tuple[Node, int]:
     """Parse source string with given language, return (Node, node_count)."""
@@ -104,8 +80,6 @@ def _parse_html_skeleton(html: str) -> tuple[Node | None, int]:
     return stripped, n
 
 
-# ─── token-Jaccard fallback ──────────────────────────────────────────────────
-
 _TOKEN_RE = re.compile(r"[a-zA-Z_][\w-]*|[0-9]+(?:\.[0-9]+)?(?:%|px|em|rem|vh|vw|s|ms)?")
 
 
@@ -119,8 +93,6 @@ def _token_jaccard(a: str, b: str) -> float:
     return len(toks_a & toks_b) / len(toks_a | toks_b)
 
 
-# ─── per-layer TSED ──────────────────────────────────────────────────────────
-
 def _layer_score(
     node_r: Node | None,
     len_r: int,
@@ -130,11 +102,9 @@ def _layer_score(
     fallback_g: str,
     max_nodes: int,
 ) -> tuple[float, bool]:
-    """Compute TSED for one layer.  Returns (score, used_fallback)."""
-    # Both empty → perfect match
+    """Compute TSED for one part of the file. Returns (score, used_fallback)."""
     if len_r == 0 and len_g == 0:
         return 1.0, False
-    # One empty → zero similarity
     if len_r == 0 or len_g == 0:
         return 0.0, False
 
@@ -147,29 +117,20 @@ def _layer_score(
     return score, False
 
 
-# ─── Public API ───────────────────────────────────────────────────────────────
-
 def run(render_path: str, gold_path: str) -> dict:
-    """Compute tripartite TSED between a rendered HTML file and a gold HTML file.
-
-    Each file is split into HTML skeleton, CSS, and JS layers.  Each layer is
-    parsed with its native tree-sitter grammar and scored independently with
-    APTED tree edit distance.  The three layer scores are combined with
-    content-proportional weights (larger layers get more weight).
+    """Compute tripartite TSED between a generated HTML file and a gold HTML file.
 
     Args:
-        render_path: path to the generated HTML file.
-        gold_path:   path to the gold/reference HTML file.
+        render_path: Path to the generated HTML file.
+        gold_path: Path to the gold HTML file.
 
-    Returns:
-        score           – combined TSED in [0, 1]
-        html_score      – per-layer score for HTML skeleton
-        css_score       – per-layer score for CSS
-        js_score        – per-layer score for JS
-        weight_html / weight_css / weight_js – contribution weights
-        n_html_r / n_css_r / n_js_r          – render AST node counts per layer
-        n_html_g / n_css_g / n_js_g          – gold   AST node counts per layer
-        css_fallback / js_fallback / html_fallback – True if token-Jaccard was used
+    Returns a dict with:
+        score: Weighted TSED in [0, 1].
+        html_score, css_score, js_score: Score of each part.
+        weight_html, weight_css, weight_js: Weight of each part.
+        n_html_r, n_css_r, n_js_r: Render AST node counts.
+        n_html_g, n_css_g, n_js_g: Gold AST node counts.
+        html_fallback, css_fallback, js_fallback: True if token Jaccard was used.
     """
     render_html = Path(render_path).read_text(encoding="utf-8", errors="replace")
     gold_html   = Path(gold_path).read_text(encoding="utf-8", errors="replace")
@@ -178,7 +139,6 @@ def run(render_path: str, gold_path: str) -> dict:
 
 
 def _score(render_html: str, gold_html: str) -> dict:
-    # ── Parse each layer ────────────────────────────────────────────────────
     html_r, len_html_r = _parse_html_skeleton(render_html)
     html_g, len_html_g = _parse_html_skeleton(gold_html)
 
@@ -192,7 +152,6 @@ def _score(render_html: str, gold_html: str) -> dict:
     js_r, len_js_r = _parse_lang(js_src_r, "javascript") if js_src_r.strip() else (None, 0)
     js_g, len_js_g = _parse_lang(js_src_g, "javascript") if js_src_g.strip() else (None, 0)
 
-    # ── Per-layer TSED scores ────────────────────────────────────────────────
     html_score, html_fb = _layer_score(
         html_r, len_html_r, html_g, len_html_g,
         render_html, gold_html, MAX_NODES_HTML,
@@ -206,8 +165,6 @@ def _score(render_html: str, gold_html: str) -> dict:
         js_src_r, js_src_g, MAX_NODES_JS,
     )
 
-    # ── Content-proportional weights ────────────────────────────────────────
-    # Use the larger of render/gold node counts as the "content size" proxy
     w_html = max(len_html_r, len_html_g)
     w_css  = max(len_css_r,  len_css_g)
     w_js   = max(len_js_r,   len_js_g)
@@ -240,8 +197,6 @@ def _score(render_html: str, gold_html: str) -> dict:
         "js_fallback":    js_fb,
     }
 
-
-# ─── CLI ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(

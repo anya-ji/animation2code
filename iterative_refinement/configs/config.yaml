@@ -1,31 +1,22 @@
-# Iterative Refinement Config
-# Each stage (generator / critic / editor) independently selects a model.
-# Supported models: gemini | qwen3vl
-
-# ── Dataset ───────────────────────────────────────────────────────────────
+# Each stage selects its own model: gemini or qwen3vl.
 dataset:
-  # Path to local dataset directory (each subdir must have animation.mp4)
-  # Relative to repo root. Override with --dataset-dir on CLI.
-  local_dir: dataset
+  local_dir: anim2code_data/data/test
 
-# ── Run settings ──────────────────────────────────────────────────────────
-max_iterations: 3      # refinement rounds after initial generation (iter_0)
-retries: 1             # per-stage retry attempts on error (with backoff)
-retry_backoff_s: 5     # seconds to wait between retries (doubles each attempt)
+max_iterations: 3      # refinement rounds after iter_0
+retries: 1             # retries per stage on error
+retry_backoff_s: 5     # wait between retries, doubled each attempt
 
-# ── Recording ─────────────────────────────────────────────────────────────
 recorder:
   fps: 12
-  duration: 10         # fixed recording length in seconds
+  duration: 10         # seconds
   width: 1024
   height: 768
 
-# ── Stage: initial code generation from ground truth video ────────────────
 generator:
-  model: gemini        # gemini | qwen3vl
+  model: gemini
   gemini:
     model_id: gemini-3-flash-preview
-    fps: 5             # frames/sec Gemini samples from the video (affects token count)
+    fps: 5             # frames per second sampled from the video
     temperature: 0.0
     max_output_tokens: 65536
   qwen3vl:
@@ -36,12 +27,11 @@ generator:
     temperature: 0.2
     top_p: 0.9
 
-# ── Stage: visual critic compares target vs generated video ───────────────
 critic:
-  model: gemini        # gemini | qwen3vl
+  model: gemini
   gemini:
     model_id: gemini-3-flash-preview
-    fps: 5             # critic sees both videos at this fps
+    fps: 5
     temperature: 0.0
     max_output_tokens: 8192
   qwen3vl:
@@ -52,13 +42,12 @@ critic:
     temperature: 0.0
     top_p: 1.0
 
-# ── Stage: code editor applies critique to produce updated HTML ───────────
 editor:
-  model: gemini        # gemini | qwen3vl
-  include_target_video: false  # pass ground truth video to editor for reference
+  model: gemini
+  include_target_video: false  # also pass the gold video to the editor
   gemini:
     model_id: gemini-3-flash-preview
-    fps: 5             # fps of the optional reference video passed to the editor
+    fps: 5
     temperature: 0.2
     max_output_tokens: 65536
   qwen3vl:

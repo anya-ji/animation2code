@@ -1,58 +1,40 @@
-# Recording Pipeline
+# Recording
 
-Records `full.html` animation files into `animation.mp4` using Puppeteer with a deterministic virtual clock.
+Records `full.html` files to `animation.mp4` with Puppeteer on a deterministic virtual clock (1024×768, 30 fps, up to 8 s).
 
 ## Setup
 
+Requires Node.js 18+ and ffmpeg.
+
 ```bash
 npm install
+pip install -r requirements.txt
 ```
 
-Requires Node.js, ffmpeg, and a Chromium installation accessible by Puppeteer.
-
-## Usage
+## Run
 
 ```bash
-# Record all examples in dataset/
-node record.js
-
-# Record a single example
-node record.js codepen-ABCD-1234
-
-# Custom output folder and concurrency
-node record.js --output run1 --concurrency 4
-
-# Re-record all (ignore resume state)
-node record.js --rewrite
-
-# Enable deterministic JS time mocking
+# All test examples in anim2code_data/, written to output/run1/
 node record.js --js-inject
+
+# One example, or a custom run name and parallelism
+node record.js <id> --js-inject
+node record.js --output run2 --concurrency 4 --js-inject
+
+# Any folder of <id>/full.html, writing videos next to them
+node record.js --html-dir <dir> --js-inject
 ```
 
-Input: `dataset/<example>/full.html`
-Output: `output/<run_name>/<example>/animation.mp4`
-
-Default: `1024×768`, 30 fps, up to 8s duration.
+`--js-inject` mocks JavaScript time and `Math.random`, which makes runs of JavaScript animations repeatable. Add `--rewrite` to re-record finished examples or `--fps N` to change the frame rate.
 
 ## Quality checks
 
-### Static detection
-
 ```bash
-python static_check/check_static.py --run-dir output/run1
-python static_check/dashboard.py --run-dir output/run1  # web UI
-```
+# Flag videos with no motion, written to static_check/static_videos.json
+RUN_DIR=output/run1 python static_check/check_static.py
+RUN_DIR=output/run1 python static_check/dashboard.py    # http://localhost:8080
 
-Flags videos where no pixels change between frames.
-
-### Determinism check
-
-Run two independent recordings, then compare:
-
-```bash
-node record.js --output run1
-node record.js --output run2
-python determinism_check/check_deterministic.py --run1 output/run1 --run2 output/run2
-python determinism_check/dashboard.py           # web UI
-python determinism_check/rerun_false.py         # re-record non-deterministic examples
+# Compare two independent runs, written to determinism_check/determinism_comparison.csv
+python determinism_check/check_deterministic.py --runs output/run1 output/run2
+python determinism_check/dashboard.py                   # http://localhost:5500
 ```

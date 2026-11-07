@@ -1,18 +1,12 @@
-"""
-Core iterative refinement pipeline.
+"""Core iterative refinement loop.
 
-Pipeline per example:
-  iter_0  : generator model watches ground-truth video → generates HTML
-             → recorded to iter_0/animation.mp4
-  iter_1  : critic model compares gt video vs iter_0 video → feedback text
-             editor model reads feedback + current code → new HTML
-             → recorded to iter_1/animation.mp4
-  iter_N  : same as iter_1, using previous iteration's video
-  ...
+For each example:
+  iter_0: The generator watches the gold video and writes HTML, which is recorded.
+  iter_N: The critic compares the gold video with the last video, the editor applies its feedback,
+          and the new HTML is recorded.
 
-All intermediate outputs are saved after every step. If a step fails after
-exhausting retries, the error is recorded in trace.json and the example is
-skipped (pipeline moves to next example).
+Every step's output is saved. If a step fails after its retries, the error goes in trace.json and
+the pipeline moves on to the next example.
 """
 
 import re
@@ -24,7 +18,6 @@ from modules.logger import ExampleTrace, RunLogger
 from modules.models.base import BaseModel
 from modules.recorder import Recorder
 
-# ── Stage prompts ─────────────────────────────────────────────────────────
 
 GENERATOR_SYSTEM = (
     "You are an expert web developer specializing in CSS animations and JavaScript. "
@@ -69,7 +62,6 @@ EDITOR_SYSTEM = (
     "Your job is to produce a revised, complete HTML document that addresses all feedback."
 )
 
-# The editor user prompt is built dynamically to include the current code and feedback.
 EDITOR_USER_TEMPLATE = (
     "{target_video_note}"
     "Here is the current HTML code:\n\n"
@@ -82,20 +74,18 @@ EDITOR_USER_TEMPLATE = (
 )
 
 
-# ── HTML parsing ──────────────────────────────────────────────────────────
-
 def parse_html(raw: str) -> tuple[str, str]:
-    """
-    Extract the HTML document from a model response.
+    """Extract the HTML document from a model response.
+
+    Args:
+        raw: Raw model output.
 
     Returns:
-        (html_str, error_msg) — error_msg is empty string on success.
+        (html, error), where error is an empty string on success.
     """
-    # Strip markdown code fence if present
     fenced = re.search(r"```(?:\w+)?\s*(.*?)```", raw, re.DOTALL)
     cleaned = fenced.group(1).strip() if fenced else raw.strip()
 
-    # Handle truncated output: opening fence with no closing fence
     if not fenced:
         partial = re.search(r"```(?:\w+)?\s*(.*)", raw, re.DOTALL)
         if partial:
@@ -107,12 +97,17 @@ def parse_html(raw: str) -> tuple[str, str]:
     return raw.strip(), "Response did not contain an <html> tag"
 
 
-# ── Retry wrapper ─────────────────────────────────────────────────────────
-
 def with_retries(fn, retries: int, backoff_s: float, logger: RunLogger, stage: str):
-    """
-    Call fn() up to (1 + retries) times. On error, wait backoff_s * 2^attempt
-    before retrying. Raises the last exception if all attempts fail.
+    """Call fn up to 1 + retries times, waiting backoff_s * 2^attempt between tries.
+
+    Args:
+        fn: Function to call.
+        retries: Number of retries after the first attempt.
+        backoff_s: Initial wait in seconds.
+        logger: RunLogger.
+        stage: Stage name for log messages.
+
+    Raises the last exception if every attempt fails.
     """
     for attempt in range(retries + 1):
         try:
@@ -132,8 +127,6 @@ def with_retries(fn, retries: int, backoff_s: float, logger: RunLogger, stage: s
                 raise
 
 
-# ── Model container ───────────────────────────────────────────────────────
-
 @dataclass
 class Models:
     generator: BaseModel
@@ -144,8 +137,6 @@ class Models:
     editor_name: str
 
 
-# ── Main example loop ─────────────────────────────────────────────────────
-
 def run_example(
     example_id: str,
     gt_video_path: Path,
@@ -154,10 +145,18 @@ def run_example(
     run_dir: Path,
     logger: RunLogger,
 ) -> dict:
-    """
-    Run the full iterative refinement loop for one example.
+    """Run the baseline refinement loop for one example.
 
-    Returns the final trace data dict (also written to trace.json).
+    Args:
+        example_id: Example name.
+        gt_video_path: Path to the gold video.
+        cfg: Parsed config.
+        models: Generator, critic and editor models.
+        run_dir: Output directory for this run.
+        logger: RunLogger.
+
+    Returns:
+        The trace dict, also written to trace.json.
     """
     example_dir = run_dir / example_id
     example_dir.mkdir(parents=True, exist_ok=True)
@@ -171,7 +170,6 @@ def run_example(
     include_target_video = cfg.get("editor", {}).get("include_target_video", False)
 
     try:
-        # ── iter_0: initial code generation ──────────────────────────────
         iter_dir = example_dir / "iter_0"
         iter_dir.mkdir(exist_ok=True)
 
@@ -212,7 +210,6 @@ def run_example(
         )
         logger.info("[%s] iter_0 done in %.1fs", example_id, elapsed)
 
-        # ── iter_1 … max_iters: critic → editor → record ─────────────────
         for i in range(1, max_iters + 1):
             iter_dir = example_dir / f"iter_{i}"
             iter_dir.mkdir(exist_ok=True)

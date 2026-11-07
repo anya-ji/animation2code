@@ -1,33 +1,13 @@
-"""
-METHOD: BBox
+"""Compare each video inside its own animated region (the paper's appearance metric with DreamSim).
 
-Evaluates similarity within the animated region of each video independently.
+Steps:
+  1. Find the tightest square around the changing pixels in the render and in the gold.
+  2. Crop each video to its own square.
+  3. Downscale the larger crop to match the smaller.
+  4. Compare frames with SSIM, CLIP or DreamSim, aligned with DTW by default.
 
-Unlike precision (render bbox applied to both) or recall (gold bbox applied to
-both), this method crops each video to its own animated bounding box, then
-downscales the larger crop to the smaller side length before comparing.
-
-Algorithm:
-  1. Find the tightest square bbox of changing pixels in the RENDER video.
-  2. Find the tightest square bbox of changing pixels in the GOLD video.
-  3. Crop each video to its own bbox.
-  4. Downscale the larger cropped region to match the smaller side length.
-  5. Compare with SSIM or CLIP (with optional DTW alignment).
-
-Rationale: by evaluating each video in its own animated region, positional
-shifts between render and gold do not dominate the score.  The downscale step
-ensures both crops are the same size before comparison.
-
-If the render is static (no changing pixels), the full frame is used as its
-bbox; is_static=True is set in the output.
-
-With --with-dtw, a full n×m similarity matrix is built and DTW is used
-to find the optimal frame alignment before scoring.
-
-Usage (standalone):
-    uv run python evaluation/methods/bbox.py render.mp4 gold.mp4
-    uv run python evaluation/methods/bbox.py render.mp4 gold.mp4 --sim clip
-    uv run python evaluation/methods/bbox.py render.mp4 gold.mp4 --without-dtw
+Using separate crops stops position shifts between the videos from dominating the score.
+A static render uses the full frame as its crop and is marked is_static=True.
 """
 
 import argparse
@@ -65,48 +45,34 @@ def run(
     sim: str = "ssim",
     device: str = "cpu",
 ) -> dict:
-    """Compute bbox score between render and gold videos.
-
-    Each video is cropped to its own animated bounding box, then the larger
-    crop is downscaled to match the smaller before comparison.
+    """Compute the bbox score between a render and a gold video.
 
     Args:
-        render_path: path to the candidate/render video.
-        gold_path:   path to the gold/reference video.
-        with_dtw:    if True, use DTW alignment.
-        sim:         similarity metric — 'ssim' (default) or 'clip'.
-        device:      torch device for CLIP embeddings.
+        render_path: Path to the rendered video.
+        gold_path: Path to the gold video.
+        with_dtw: Align frames with DTW; otherwise compare matching indices.
+        sim: Similarity metric: "ssim", "clip" or "dreamsim".
+        device: Torch device.
 
-    Returns (without DTW):
-        score           – mean similarity over aligned frames
-        per_frame       – per-frame similarity values
-        render_bbox     – [x1, y1, x2, y2] bounding box used for render
-        gold_bbox       – [x1, y1, x2, y2] bounding box used for gold
-        target_side     – side length of the downscaled comparison region
-        n_frames        – number of frames compared
-        sim             – similarity metric used
-        is_static       – True if render has no changing pixels
+    Returns a dict with:
+        score: Mean similarity over DTW-aligned pairs.
+        per_frame_dtw: Similarity of each aligned pair.
+        dtw_cost: Total DTW distance.
+        dtw_path: List of [render_idx, gold_idx] pairs.
+        n_render_frames, n_gold_frames: Frames in each video.
+        n_paired_frames: Pairs in the DTW path.
+        render_bbox, gold_bbox: [x1, y1, x2, y2] crop of each video.
+        target_side: Side length of the compared region.
+        sim: Similarity metric used.
+        is_static: True if the render has no changing pixels.
 
-    Returns (with DTW):
-        score           – mean similarity over DTW-aligned pairs
-        per_frame_dtw   – similarity for each pair in dtw_path
-        dtw_cost        – total accumulated DTW distance
-        dtw_path        – list of [render_idx, gold_idx] frame index pairs
-        render_bbox     – [x1, y1, x2, y2] bounding box used for render
-        gold_bbox       – [x1, y1, x2, y2] bounding box used for gold
-        target_side     – side length of the downscaled comparison region
-        n_render_frames – frames extracted from render video
-        n_gold_frames   – frames extracted from gold video
-        n_paired_frames – number of pairs in the DTW path
-        sim             – similarity metric used
-        is_static       – True if render has no changing pixels
+    Without DTW, per_frame and n_frames replace the DTW and frame-count fields.
     """
     render_frames = load_frames(render_path)
     gold_frames = load_frames(gold_path)
 
     is_static = is_static_video(render_frames)
 
-    # Each video gets its own bbox.
     # If the render is static, find_changing_bbox falls back to the full frame
     # (largest possible bbox), which is the correct behaviour for a static render.
     render_bbox = find_changing_bbox(render_frames, square=True)
@@ -115,7 +81,6 @@ def run(
     render_crops = crop_frames(render_frames, render_bbox)
     gold_crops = crop_frames(gold_frames, gold_bbox)
 
-    # Downscale the larger crop to match the smaller side length.
     render_side = render_bbox[2] - render_bbox[0]
     gold_side = gold_bbox[2] - gold_bbox[0]
     target_side = min(render_side, gold_side)

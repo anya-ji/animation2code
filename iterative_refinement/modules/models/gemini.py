@@ -1,21 +1,15 @@
-"""
-Gemini model implementation using the google-genai SDK.
+"""Gemini model using the google-genai SDK.
 
-Videos are passed as raw bytes with explicit VideoMetadata to control the
-sampling fps (number of frames Gemini extracts from the video). Lower fps
-means fewer tokens and faster/cheaper calls; higher fps captures more motion.
+Videos are sent as bytes with an explicit sampling rate: lower fps uses fewer tokens, and higher fps
+captures more motion. Critique calls send [target, label, generated, label, prompt].
 
-For multi-video calls (critique stage) both clips are included in the same
-contents list: [target_part, label, generated_part, label, user_prompt]
-
-Config keys (from config.yaml generator/critic/editor.gemini block):
-  model_id          : e.g. "gemini-3-flash-preview"
-  fps               : frames per second Gemini samples from each video (e.g. 5)
-  temperature       : float
-  max_output_tokens : int
+Config keys:
+  model_id: e.g. "gemini-3-flash-preview"
+  fps: Frames per second sampled from each video
+  temperature: Sampling temperature
+  max_output_tokens: Maximum tokens to generate
 """
 
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -34,10 +28,7 @@ class GeminiModel(BaseModel):
         self.fps = float(cfg.get("fps", 5))
         self.temperature = float(cfg.get("temperature", 0.0))
         self.max_output_tokens = int(cfg.get("max_output_tokens", 65536))
-        # Client is cheap to create; API key is read from GOOGLE_API_KEY env var.
         self.client = genai.Client()
-
-    # ── Internal helpers ─────────────────────────────────────────────────
 
     def _gen_cfg(self, system_prompt: str) -> types.GenerateContentConfig:
         return types.GenerateContentConfig(
@@ -63,8 +54,6 @@ class GeminiModel(BaseModel):
             config=self._gen_cfg(system_prompt),
         )
         return response.text
-
-    # ── BaseModel interface ───────────────────────────────────────────────
 
     def generate_code(
         self,
@@ -99,7 +88,6 @@ class GeminiModel(BaseModel):
         user_prompt: str,
         target_video: Path | None = None,
     ) -> str:
-        # Optionally prepend the target video for additional visual context.
         contents = []
         if target_video is not None:
             contents.append(self._video_part(target_video))

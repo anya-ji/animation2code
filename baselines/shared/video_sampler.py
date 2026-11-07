@@ -1,7 +1,4 @@
-"""Shared utility for sampling image frames from videos.
-
-Used by image-only models (GPT, etc.) that accept images instead of video.
-"""
+"""Sample image frames from videos for models that take images instead of video (GPT, etc.)."""
 import base64
 import io
 from pathlib import Path
@@ -11,14 +8,14 @@ from PIL import Image
 
 
 def sample_frames(video_path: str | Path, fps: float) -> list[Image.Image]:
-    """Sample frames from a video at the given rate.
+    """Sample frames from a video at a given rate.
 
     Args:
-        video_path: Path to video file.
+        video_path: Path to the video.
         fps: Frames per second to sample (e.g. 1, 2, 4, 8).
 
     Returns:
-        List of PIL Images, in temporal order.
+        PIL images in temporal order, with at least one frame.
     """
     frames = []
     with av.open(str(video_path)) as container:
@@ -34,7 +31,6 @@ def sample_frames(video_path: str | Path, fps: float) -> list[Image.Image]:
                 frames.append(frame.to_image())
                 next_sample += step
 
-    # Always return at least one frame
     if not frames:
         with av.open(str(video_path)) as container:
             for frame in container.decode(video=0):
@@ -49,15 +45,15 @@ def frames_to_base64(
     fmt: str = "JPEG",
     quality: int = 90,
 ) -> list[str]:
-    """Encode PIL images as base64 strings.
+    """Encode PIL images as base64 strings without a data-URI prefix.
 
     Args:
-        frames: List of PIL Images.
-        fmt: Image format ("JPEG" or "PNG").
-        quality: JPEG quality (ignored for PNG).
+        frames: PIL images.
+        fmt: Image format, "JPEG" or "PNG".
+        quality: JPEG quality; ignored for PNG.
 
     Returns:
-        List of base64-encoded strings (no data-URI prefix).
+        One base64 string per frame.
     """
     result = []
     for img in frames:

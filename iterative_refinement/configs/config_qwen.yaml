@@ -1,16 +1,13 @@
-# Iterative Refinement Config — Qwen3-VL only (no API keys needed)
-# Run on cluster with GPU
-
 dataset:
-  local_dir: dataset
+  local_dir: anim2code_data/data/test
 
-max_iterations: 3
-retries: 1
-retry_backoff_s: 5
+max_iterations: 3      # refinement rounds after iter_0
+retries: 1             # retries per stage on error
+retry_backoff_s: 5     # wait between retries, doubled each attempt
 
 recorder:
   fps: 12
-  duration: 10
+  duration: 10         # seconds
   width: 1024
   height: 768
 
@@ -36,7 +33,7 @@ critic:
 
 editor:
   model: qwen3vl
-  include_target_video: false
+  include_target_video: false  # ignored by Qwen3-VL
   qwen3vl:
     model_id: Qwen/Qwen3-VL-8B-Instruct
     fps: 2.0

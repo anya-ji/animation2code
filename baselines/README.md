@@ -1,91 +1,35 @@
 # Baselines
 
-Inference pipelines for all baseline models on the Animation2Code test set.
-
-## Models
-
-| File | Model | Input |
-|------|-------|-------|
-| `models/gemini.py` | Google Gemini (API) | video or frames |
-| `models/gpt.py` | OpenAI GPT (API) | frames |
-| `models/openrouter.py` | OpenRouter (API) | frames |
-| `models/qwen3vl.py` | Qwen3-VL-8B (local GPU) | video or frames |
-
-## Dataset
-
-Configs expect the dataset at `_hf_staging/data/test/` relative to the repo root:
-
-```
-_hf_staging/
-  data/
-    test/
-      metadata.jsonl
-      videos/
-        codepen-XXXX-yyyy.mp4
-        ...
-```
-
-Download from HuggingFace:
-```bash
-huggingface-cli download anim2code/anim2code-dev --repo-type dataset \
-    --include "data/test/*" --local-dir _hf_staging
-```
+Zero-shot video-to-code inference on the test set, using the settings from the paper (2 fps input).
 
 ## Setup
 
 ```bash
-pip install pyyaml tqdm google-genai openai python-dotenv torch transformers accelerate qwen-vl-utils av
+pip install -r requirements.txt
+cd ../recording && npm install && cd ../baselines
 ```
 
-Set API keys in `.env`:
-```
-GEMINI_API_KEY=...
-OPENAI_API_KEY=...
-OPENROUTER_API_KEY=...
-```
+Put API keys in `.env` at the repo root: `GOOGLE_API_KEY`, `OPENAI_API_KEY` and `OPENROUTER_API_KEY`.
 
-For recording, install Node.js dependencies in the `recording/` directory:
-```bash
-cd recording && npm install
-```
+## Run
 
-## Running inference
+Choose a config: `gemini`, `gpt`, `claude`, `llama` or `qwen3vl`. Qwen3-VL runs locally on a GPU; the others call an API.
 
 ```bash
-# From baselines/
-python run.py --config config/gemini.yaml   # Gemini
-python run.py --config config/gpt.yaml      # GPT (OpenAI)
-python run.py --config config/claude.yaml   # Claude (OpenRouter)
-python run.py --config config/llama.yaml    # LLaMA (OpenRouter)
-python run.py --config config/qwen3vl.yaml  # Qwen3-VL (local GPU)
-
-# From repo root:
-python baselines/run.py --config baselines/config/gemini.yaml
-python run.py --config config/qwen3vl.yaml
-
-# Subset
-python run.py --config config/gemini.yaml --start 0 --end 10
-python run.py --config config/gemini.yaml --ids codepen-xxx codepen-yyy
-
-# Resume an existing run
-python run.py --config config/gemini.yaml --output-dir gemini/output/20260318_123456
-
-# Multi-GPU for Qwen
-CUDA_VISIBLE_DEVICES=0,1 python run.py --config config/qwen3vl.yaml
-```
-
-Output per run: `<model>/output/<timestamp>/` with `_config.yaml`, `_run.log`, and per-example `full.html` + `_raw_output.txt`.
-
-## Inference + recording in one step
-
-```bash
+# Inference and recording
 python pipeline.py --config config/gemini.yaml
+
+# Inference only, on a subset
+python run.py --config config/gemini.yaml --start 0 --end 10
+python run.py --config config/gemini.yaml --ids <id> <id>
+
+# Resume a run
+python run.py --config config/gemini.yaml --output-dir <run_dir>
+
+# Record an existing run at 30 fps
+python record.py --input <run_dir>
 ```
 
-## Recording only (for existing HTML outputs)
+Each run writes `<model>/output/<timestamp>_2fps/<id>/` with `full.html`, `_raw_output.txt` and `animation.mp4`, or `_error.txt` on failure.
 
-```bash
-python record.py --input gemini/output/20260318_123456 \
-    --recorder ../recording/record.js \
-    --fps 30 --concurrency 4
-```
+To change the input rate, edit `fps` in the config (`image_sampling.fps` for GPT, Claude and LLaMA).

@@ -1,0 +1,12 @@
+accelerate
+av
+google-genai
+openai
+pillow
+python-dotenv
+pyyaml
+qwen-vl-utils
+torch
+torchvision
+tqdm
+transformers

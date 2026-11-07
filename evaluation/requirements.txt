@@ -1,0 +1,14 @@
+apted
+dreamsim
+einops
+imageio
+imageio-ffmpeg
+numpy
+opencv-python-headless
+pillow
+torch
+torchvision
+tqdm
+transformers
+tree-sitter
+tree-sitter-language-pack

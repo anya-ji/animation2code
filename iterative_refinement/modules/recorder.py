@@ -1,26 +1,17 @@
-"""
-Python wrapper around recorder.js.
-
-Spawns `node recorder.js` as a subprocess to record a given HTML file to MP4.
-recorder.js must be in the parent directory (experiments/iterative_refinement/).
-
-On first use, run.py ensures that a node_modules symlink exists pointing to
-data_processing/video_processing/v3/node_modules.
-"""
+"""Python wrapper that runs recorder.js as a subprocess to record an HTML file to MP4."""
 
 import subprocess
 from pathlib import Path
 
-# recorder.js sits one level up from this file (in iterative_refinement/)
 RECORDER_JS = Path(__file__).parent.parent / "recorder.js"
 
 
 class Recorder:
     def __init__(self, cfg: dict):
-        """
+        """Read recording settings.
+
         Args:
-            cfg: The recorder block from config.yaml with keys:
-                 fps, duration, width, height
+            cfg: The config's recorder block, with fps, duration, width, height and optional skip.
         """
         self.fps = int(cfg.get("fps", 12))
         self.duration = float(cfg.get("duration", 10))
@@ -29,19 +20,18 @@ class Recorder:
         self.skip = bool(cfg.get("skip", False))
 
     def record(self, html_path: Path, output_path: Path, timeout: int = 300) -> None:
-        """
-        Record html_path to output_path as an MP4.
+        """Record an HTML file to MP4.
 
         Args:
-            html_path:   Absolute path to the HTML file to record.
-            output_path: Absolute path where the MP4 will be written.
-            timeout:     Subprocess timeout in seconds.
+            html_path: Absolute path to the HTML file.
+            output_path: Absolute path for the MP4.
+            timeout: Subprocess timeout in seconds.
 
         Raises:
-            RuntimeError: If recorder.js exits with a non-zero code.
+            RuntimeError: If recorder.js fails.
         """
         if self.skip:
-            return  # Skip recording (will be done locally later)
+            return
 
         if not RECORDER_JS.exists():
             raise FileNotFoundError(f"recorder.js not found at {RECORDER_JS}")

@@ -1,15 +1,9 @@
 #!/usr/bin/env node
 /**
- * Record a single HTML file to MP4.
+ * Record one HTML file to MP4.
  *
- * Adapted from data_processing/video_processing/v3/record.js for use with
- * arbitrary HTML file paths (not tied to the dataset directory structure).
- *
- * Usage:
- *   node recorder.js --html /abs/path/to/full.html --output /abs/path/out.mp4
- *                    [--fps 12] [--duration 10] [--width 1024] [--height 768]
- *
- * node_modules must be available — run.py symlinks v3's node_modules here on first use.
+ * node recorder.js --html /abs/path/full.html --output /abs/path/out.mp4
+ *                  [--fps 12] [--duration 10] [--width 1024] [--height 768]
  */
 import { capture, launch, PuppeteerCaptureFormat } from "puppeteer-capture";
 import fs from "fs";
@@ -17,8 +11,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ─── CSS helpers (same logic as v3/record.js) ─────────────────────────────
 
 function bodyIsAnimated(html) {
   return /body\s*\{[^}]*animation[\w-]*\s*:/i.test(html);
@@ -44,13 +36,8 @@ function buildFixCss(html) {
   return parts.join(" ");
 }
 
-// ─── Find chrome-headless-shell ───────────────────────────────────────────
-
 const CHROME_HEADLESS_SHELL = (() => {
-  const base = path.join(
-    process.env.HOME || "/home/anyaji",
-    ".cache/puppeteer/chrome-headless-shell"
-  );
+  const base = path.join(process.env.HOME, ".cache/puppeteer/chrome-headless-shell");
   if (!fs.existsSync(base)) return undefined;
   const builds = fs.readdirSync(base).sort().reverse();
   for (const build of builds) {
@@ -59,8 +46,6 @@ const CHROME_HEADLESS_SHELL = (() => {
   }
   return undefined;
 })();
-
-// ─── CLI ──────────────────────────────────────────────────────────────────
 
 function parseArgs() {
   const argv = process.argv.slice(2);
@@ -83,8 +68,6 @@ function parseArgs() {
   }
   return opts;
 }
-
-// ─── Recording ────────────────────────────────────────────────────────────
 
 async function recordHtml(opts) {
   const { htmlPath, outputPath, fps, duration, width, height } = opts;
@@ -182,8 +165,6 @@ async function recordHtml(opts) {
     if (fs.existsSync(tmpPath)) { try { fs.unlinkSync(tmpPath); } catch {} }
   }
 }
-
-// ─── Main ─────────────────────────────────────────────────────────────────
 
 const opts = parseArgs();
 recordHtml(opts).catch((err) => {

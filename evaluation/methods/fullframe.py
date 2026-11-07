@@ -1,26 +1,7 @@
-"""
-METHOD: Full Frame
+"""Compare a render and a gold video over the entire frame, with no crop.
 
-Compares render and gold videos over the entire frame with no bounding-box crop.
-By default uses DTW to find the optimal temporal alignment before scoring.
-
---sim ssim (default): SSIM on grayscale full frames
---sim clip:           CLIP ViT-B/32 cosine similarity on full frames
-
-With DTW (default):
-  - Builds a full n×m distance matrix using the chosen similarity metric
-  - Runs DTW to find the optimal frame alignment
-  Output fields: score, per_frame_dtw, dtw_cost, dtw_path, n_paired_frames,
-                 n_render_frames, n_gold_frames
-
-Without DTW (--without-dtw):
-  - Compares frames at matching indices, truncating to the shorter video
-  Output fields: score, per_frame, n_frames
-
-Usage (standalone):
-    uv run python evaluation/methods/fullframe.py render.mp4 gold.mp4
-    uv run python evaluation/methods/fullframe.py render.mp4 gold.mp4 --sim clip
-    uv run python evaluation/methods/fullframe.py render.mp4 gold.mp4 --without-dtw
+Uses SSIM, CLIP or DreamSim. Frames are aligned with DTW by default; with --without-dtw they are
+compared at matching indices, truncated to the shorter video.
 """
 
 import argparse
@@ -49,30 +30,26 @@ def run(
     sim: str = "ssim",
     device: str = "cpu",
 ) -> dict:
-    """Compute full-frame similarity score between render and gold videos.
+    """Compute the full-frame similarity between a render and a gold video.
 
     Args:
-        render_path: path to the candidate/render video.
-        gold_path:   path to the gold/reference video.
-        with_dtw:    use DTW alignment (default: True).
-        sim:         similarity metric — 'ssim' (default) or 'clip'.
-        device:      torch device for CLIP embeddings.
+        render_path: Path to the rendered video.
+        gold_path: Path to the gold video.
+        with_dtw: Align frames with DTW; otherwise compare matching indices.
+        sim: Similarity metric: "ssim", "clip" or "dreamsim".
+        device: Torch device.
 
-    Returns (with DTW, default):
-        score            – mean similarity over DTW-aligned pairs
-        per_frame_dtw    – similarity for each pair in dtw_path
-        dtw_cost         – total accumulated DTW distance
-        dtw_path         – list of [render_idx, gold_idx] frame index pairs
-        n_render_frames  – frames in render video
-        n_gold_frames    – frames in gold video
-        n_paired_frames  – number of pairs in DTW path
-        sim              – similarity metric used
+    Returns a dict with:
+        score: Mean similarity over DTW-aligned pairs.
+        per_frame_dtw: Similarity of each aligned pair.
+        dtw_cost: Total DTW distance.
+        dtw_path: List of [render_idx, gold_idx] pairs.
+        n_render_frames, n_gold_frames: Frames in each video.
+        n_paired_frames: Pairs in the DTW path.
+        sim: Similarity metric used.
+    is_static: True if the render has no changing pixels.
 
-    Returns (without DTW):
-        score        – mean similarity over aligned frames
-        per_frame    – per-frame similarity values
-        n_frames     – number of frames compared
-        sim          – similarity metric used
+    Without DTW, per_frame and n_frames replace the DTW and frame-count fields.
     """
     render_frames = load_frames(render_path)
     gold_frames = load_frames(gold_path)

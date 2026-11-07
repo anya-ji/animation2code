@@ -13,13 +13,14 @@ def strip_code_fence(text: str) -> str:
 
 
 def parse_response(response: str) -> tuple[str | None, str]:
-    """Parse model response into a complete HTML document.
+    """Extract a complete HTML document from a model response.
+
+    Args:
+        response: Raw model output.
 
     Returns:
-        (html_str, "")          — complete HTML found, save as full.html
-        (None, error_message)   — truncated or no HTML; save error, do NOT save full.html
-
-    Always save the raw response separately regardless of this result.
+        (html, "") if a complete document was found, or (None, error) if it is truncated or
+        missing, in which case no full.html should be saved.
     """
     cleaned = strip_code_fence(response)
 

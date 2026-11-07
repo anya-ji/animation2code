@@ -1,19 +1,14 @@
-"""
-Literature-based pipeline variants for iterative refinement.
+"""Refinement variants based on prior work, using the same models, recorder and trace as pipeline.py.
 
-  describe_first — (ChartIR) Describe animation in NL before generating code
-  dual_critic    — (METAL) Separate visual critic + code critic
-  caption_bridge — (PhyT2V) Caption both videos, compare as text
-
-All variants reuse the same Models, Recorder, and trace infrastructure.
-The baseline variant is implemented in pipeline.py.
+  describe_first (ChartIR): Describe the animation in words before generating code.
+  dual_critic (METAL): Run a visual critic, then a code critic.
+  caption_bridge (PhyT2V): Caption both videos and compare the captions as text.
 """
 
 import time
 from pathlib import Path
 
 from modules.logger import ExampleTrace, RunLogger
-from modules.models.base import BaseModel
 from modules.pipeline import (
     EDITOR_SYSTEM,
     EDITOR_USER_TEMPLATE,
@@ -25,7 +20,6 @@ from modules.pipeline import (
 )
 from modules.recorder import Recorder
 
-# ── Shared: initial generation (iter_0) ──────────────────────────────────
 
 def _run_iter_0(example_id, gt_video_path, models, recorder, example_dir,
                 retries, backoff, logger, trace):
@@ -126,7 +120,18 @@ def run_describe_first(
     example_id: str, gt_video_path: Path, cfg: dict,
     models: Models, run_dir: Path, logger: RunLogger,
 ) -> dict:
-    """Describe animation in NL first, then generate code from description.
+    """Describe the animation first, then generate code and critique against that description.
+
+    Args:
+        example_id: Example name.
+        gt_video_path: Path to the gold video.
+        cfg: Parsed config.
+        models: Generator, critic and editor models.
+        run_dir: Output directory for this run.
+        logger: RunLogger.
+
+    Returns:
+        The trace dict, also written to trace.json.
     """
     example_dir = run_dir / example_id
     example_dir.mkdir(parents=True, exist_ok=True)
@@ -139,7 +144,6 @@ def run_describe_first(
     include_target_video = cfg.get("editor", {}).get("include_target_video", False)
 
     try:
-        # Step 1: Describe the animation
         logger.info("[%s] describe-first: generating description", example_id)
         t0 = time.time()
         iter_dir = example_dir / "iter_0"
@@ -168,7 +172,6 @@ def run_describe_first(
             (iter_dir / "description.txt").write_text(description, encoding="utf-8")
             logger.info("[%s] description: %d chars", example_id, len(description))
 
-            # Step 2: Generate code from description (+ video)
             logger.info("[%s] iter_0: generating code from description", example_id)
             code_prompt = DESCRIBE_THEN_CODE_USER.format(description=description)
             raw_gen = with_retries(
@@ -199,13 +202,11 @@ def run_describe_first(
             )
             logger.info("[%s] iter_0 done in %.1fs", example_id, elapsed)
 
-        # Refinement: use holistic difference descriptions (ChartIR style)
         for i in range(1, max_iters + 1):
             iter_dir = example_dir / f"iter_{i}"
             iter_dir.mkdir(exist_ok=True)
             t0 = time.time()
 
-            # Holistic difference critique (referencing the original description)
             from modules.pipeline import CRITIC_SYSTEM
             diff_prompt = DESCRIBE_DIFF_USER.format(description=description)
             raw_feedback = with_retries(
@@ -218,7 +219,6 @@ def run_describe_first(
             feedback = raw_feedback.strip()
             (iter_dir / "feedback.txt").write_text(feedback, encoding="utf-8")
 
-            # Edit with description context
             user_prompt = EDITOR_USER_TEMPLATE.format(
                 target_video_note=f"Original animation description:\n{description}\n\n",
                 current_code=current_html, feedback=feedback,
@@ -262,10 +262,6 @@ def run_describe_first(
     return trace.data
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Variant: Dual Critic (based by METAL)
-# ═══════════════════════════════════════════════════════════════════════════
-
 VISUAL_CRITIC_SYSTEM = (
     "You are a visual expert. Compare two animation videos and describe ONLY "
     "the visual differences you see. Focus on what looks different, not code."
@@ -308,13 +304,21 @@ def run_dual_critic(
     example_id: str, gt_video_path: Path, cfg: dict,
     models: Models, run_dir: Path, logger: RunLogger,
 ) -> dict:
-    """Separate visual critic + code critic (METAL approach).
+    """Run two critics before each edit (METAL).
 
-    Two-pass critique:
-    1. Visual critic: compares videos, describes visual differences
-    2. Code critic: reads the visual feedback + code, suggests specific code fixes
+    The visual critic compares the videos, then the code critic turns that into code fixes. The editor
+    receives both.
 
-    The editor gets both feedbacks.
+    Args:
+        example_id: Example name.
+        gt_video_path: Path to the gold video.
+        cfg: Parsed config.
+        models: Generator, critic and editor models.
+        run_dir: Output directory for this run.
+        logger: RunLogger.
+
+    Returns:
+        The trace dict, also written to trace.json.
     """
     example_dir = run_dir / example_id
     example_dir.mkdir(parents=True, exist_ok=True)
@@ -336,7 +340,6 @@ def run_dual_critic(
             iter_dir.mkdir(exist_ok=True)
             t0 = time.time()
 
-            # Pass 1: Visual critic (looks at videos)
             logger.info("[%s] iter_%d: visual critique", example_id, i)
             raw_visual = with_retries(
                 lambda: models.critic.critique(
@@ -349,7 +352,6 @@ def run_dual_critic(
             visual_feedback = raw_visual.strip()
             (iter_dir / "visual_feedback.txt").write_text(visual_feedback, encoding="utf-8")
 
-            # Pass 2: Code critic (reads visual feedback + code, no video needed)
             logger.info("[%s] iter_%d: code critique", example_id, i)
             code_critic_prompt = CODE_CRITIC_USER.format(
                 visual_feedback=visual_feedback, current_code=current_html,
@@ -369,7 +371,6 @@ def run_dual_critic(
                 encoding="utf-8",
             )
 
-            # Edit with both feedbacks
             logger.info("[%s] iter_%d: editing with dual feedback", example_id, i)
             editor_prompt = DUAL_EDITOR_USER.format(
                 current_code=current_html,
@@ -417,10 +418,6 @@ def run_dual_critic(
     return trace.data
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Variant: Caption Bridge (based by PhyT2V)
-# ═══════════════════════════════════════════════════════════════════════════
-
 CAPTION_SYSTEM = (
     "You are an expert at describing web animations in precise detail. "
     "Describe exactly what you see happening in the animation."
@@ -453,11 +450,20 @@ def run_caption_bridge(
     example_id: str, gt_video_path: Path, cfg: dict,
     models: Models, run_dir: Path, logger: RunLogger,
 ) -> dict:
-    """Caption both videos, compare as text (PhyT2V approach).
+    """Caption each video and compare the captions as text (PhyT2V).
 
-    Instead of asking the critic to directly compare two videos visually,
-    caption each video separately into text, then compare the text descriptions.
-    This bypasses the 'too much visual info' bottleneck.
+    This avoids asking the critic to compare two videos directly.
+
+    Args:
+        example_id: Example name.
+        gt_video_path: Path to the gold video.
+        cfg: Parsed config.
+        models: Generator, critic and editor models.
+        run_dir: Output directory for this run.
+        logger: RunLogger.
+
+    Returns:
+        The trace dict, also written to trace.json.
     """
     example_dir = run_dir / example_id
     example_dir.mkdir(parents=True, exist_ok=True)
@@ -482,7 +488,6 @@ def run_caption_bridge(
         )
         (example_dir / "target_caption.txt").write_text(target_caption, encoding="utf-8")
 
-        # iter_0: normal generation
         current_html, current_video = _run_iter_0(
             example_id, gt_video_path, models, recorder, example_dir,
             retries, backoff, logger, trace,
@@ -493,11 +498,10 @@ def run_caption_bridge(
             iter_dir.mkdir(exist_ok=True)
             t0 = time.time()
 
-            # Caption the generated video
             logger.info("[%s] iter_%d: captioning generated video", example_id, i)
             gen_caption = with_retries(
                 lambda: models.critic.critique(
-                    target_video=current_video,  # just pass one video
+                    target_video=current_video,
                     generated_video=current_video,
                     system_prompt=CAPTION_SYSTEM,
                     user_prompt=CAPTION_USER,
@@ -506,13 +510,11 @@ def run_caption_bridge(
             )
             (iter_dir / "generated_caption.txt").write_text(gen_caption, encoding="utf-8")
 
-            # Compare captions as text (no video needed for this step)
             logger.info("[%s] iter_%d: comparing captions", example_id, i)
             from modules.pipeline import CRITIC_SYSTEM
             compare_prompt = CAPTION_COMPARE_USER.format(
                 target_caption=target_caption, generated_caption=gen_caption,
             )
-            # Use editor model for text-only comparison (no video input needed)
             raw_feedback = with_retries(
                 lambda: models.editor.edit_code(
                     current_code="", feedback="",
@@ -525,7 +527,6 @@ def run_caption_bridge(
             (iter_dir / "feedback.txt").write_text(feedback, encoding="utf-8")
             (iter_dir / "raw_critic.txt").write_text(raw_feedback, encoding="utf-8")
 
-            # Edit
             logger.info("[%s] iter_%d: editing code", example_id, i)
             user_prompt = EDITOR_USER_TEMPLATE.format(
                 target_video_note=(f"Target animation description:\n{target_caption}\n\n"

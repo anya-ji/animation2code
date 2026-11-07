@@ -1,14 +1,12 @@
 model_id: Qwen/Qwen3-VL-8B-Instruct
 
-# Output
 output_dir: checkpoints/lora
 run_name: sft-lora
 report_to: ["wandb"]
 
-# Liger fused linear+CE allows training on full-length sequences.
+# Fused linear + cross-entropy, so full-length sequences fit in memory.
 use_liger_kernel: true
 
-# Training schedule
 epochs: 5
 per_device_train_batch_size: 1
 per_device_eval_batch_size: 1
@@ -22,13 +20,17 @@ logging_steps: 10
 save_total_limit: 5
 save_only_model: true
 
-# Data
-fps: 2.0
-max_pixels: 112896
-max_text_len: 16384
+# The best epoch is chosen after training: reloading it from every rank runs out of memory on GPU 0.
+load_best_model_at_end: false
+metric_for_best_model: eval_loss
+greater_is_better: false
+
+fps: 2.0               # frames per second sampled from each video
+max_pixels: 112896     # pixels per frame, 336*336
+max_text_len: 16384    # truncation length, including video tokens
 dataloader_num_workers: 2
 
-# LoRA
+# Applied to the language tower; the vision tower stays frozen.
 lora:
   r: 64
   alpha: 128

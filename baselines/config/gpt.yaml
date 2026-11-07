@@ -1,14 +1,14 @@
 model:
   name: gpt
-  model_id: gpt-4.1
+  model_id: gpt-5.4
   image_sampling:
-    fps: 8
+    fps: 2
   max_completion_tokens: 16384
   temperature: 0
 
 data:
-  local_dataset: ../_hf_staging/data/test
+  local_dataset: ../anim2code_data/data/test
 
 output:
   base_dir: gpt/output
-  suffix: ""
+  suffix: "2fps"

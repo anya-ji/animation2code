@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""
-Compare determinism runs across output/run1/ and output/run2/.
+"""Compare two recording runs to find non-deterministic examples.
 
-Checks:
-  1. Byte-level SHA256 hash (fast)
-  2. Frame-by-frame pixel comparison via ffmpeg (if hashes differ)
-
-Usage:
-    uv run python check_deterministic.py --runs ../output/run1 ../output/run2 --out comparison.csv
+Compares SHA256 hashes first, then compares frames with ffmpeg if the hashes differ.
 """
 import hashlib
 import json
@@ -22,7 +16,7 @@ from typing import Optional, Tuple
 from tqdm import tqdm
 
 SCRIPT_DIR = Path(__file__).parent
-REPO_ROOT = SCRIPT_DIR.parent.parent.parent.parent
+RECORDING_DIR = SCRIPT_DIR.parent
 
 # Videos with PSNR >= this threshold are considered perceptually identical
 # (sub-pixel rendering noise). Empirically: CSS/GSAP sub-pixel noise ≥ 61 dB,
@@ -116,7 +110,7 @@ def parse_args():
         "--runs",
         nargs=2,
         metavar=("RUN1", "RUN2"),
-        default=[REPO_ROOT / "output" / "run1", REPO_ROOT / "output" / "run2"],
+        default=[RECORDING_DIR / "output" / "run1", RECORDING_DIR / "output" / "run2"],
         help="Paths to run directories (each contains */animation.mp4).",
     )
     parser.add_argument(

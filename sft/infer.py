@@ -1,195 +1,39 @@
-"""
-Inference script for SFT checkpoints on the test set.
+"""Generate HTML for the test set with a fine-tuned checkpoint.
 
-Usage:
-    python sft/infer.py --run-type lora \
-        --checkpoint-dir checkpoints/lora/final \
-        --output-dir results/sft_lora \
-        --test-data-dir /path/to/dataset/test
+Writes <output_dir>/<id>/ with full.html and _raw_output.txt, or _error.txt on failure.
+Finished examples are skipped, so a rerun resumes.
 """
-
 import argparse
 import gc
 import json
-import os
 import re
+import sys
 import time
 from pathlib import Path
 
-BASE_MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
-HF_DATASET = "anim2code/anim2code-dev"
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
-VIDEO_FPS = 2.0
-VIDEO_MAX_PIXELS = 128 * 28 * 28  # 100352
-MAX_NEW_TOKENS = 8192
+from data import SYSTEM_PROMPT, USER_PROMPT
 
-SYSTEM_PROMPT = (
-    "You are an expert web developer specializing in CSS animations and JavaScript.\n"
-    "Your task is to analyze an animation video and generate the HTML/CSS/JavaScript code that recreates it.\n"
-    "Focus on accuracy - match the timing, easing, colors, and movement as closely as possible."
-)
-USER_PROMPT = (
-    "Watch this animation video carefully and generate the complete code to recreate it.\n\n"
-    "Provide your response as a single, complete HTML document only.\n"
-    "Include all CSS inside <style> tags and any JavaScript inside <script> tags.\n"
-    "Keep the code concise — avoid generating hundreds of repetitive CSS rules.\n\n"
-    "Be precise about:\n"
-    "- Animation duration and timing functions\n"
-    "- Colors and gradients\n"
-    "- Transform properties (rotate, scale, translate)\n"
-    "- Keyframe percentages\n"
-    "- Any JavaScript timing or interactions"
-)
-
-
-def find_best_checkpoint(base_dir: str) -> str:
-    """Return the checkpoint with lowest eval loss, or latest if no trainer_state."""
-    base = Path(base_dir)
-    checkpoints = sorted(base.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
-    if not checkpoints:
-        return base_dir
-
-    best_ckpt = None
-    best_loss = float("inf")
-    for ckpt in checkpoints:
-        state_file = ckpt / "trainer_state.json"
-        if state_file.exists():
-            state = json.loads(state_file.read_text())
-            logs = state.get("log_history", [])
-            for entry in reversed(logs):
-                if "eval_loss" in entry:
-                    if entry["eval_loss"] < best_loss:
-                        best_loss = entry["eval_loss"]
-                        best_ckpt = str(ckpt)
-                    break
-
-    if best_ckpt:
-        print(f"Best checkpoint: {best_ckpt} (eval_loss={best_loss:.4f})")
-        return best_ckpt
-    return str(checkpoints[-1])
-
-
-def load_test_data(test_data_dir: str) -> tuple[list[str], Path]:
-    test_dir = Path(test_data_dir)
-    if not (test_dir / "metadata.jsonl").exists():
-        # Try HF download
-        from huggingface_hub import snapshot_download
-        print(f"Downloading test split from HuggingFace: {HF_DATASET}")
-        dl_dir = Path(snapshot_download(
-            repo_id=HF_DATASET,
-            repo_type="dataset",
-            allow_patterns=["data/test/*"],
-            token=os.environ.get("HF_TOKEN"),
-        ))
-        test_dir = dl_dir / "data" / "test"
-
-    examples = []
-    with open(test_dir / "metadata.jsonl") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                examples.append(json.loads(line)["id"])
-    return sorted(examples), test_dir / "videos"
-
-
-def load_model(run_type: str, checkpoint_path: str):
-    import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-
-    if run_type == "lora":
-        from peft import PeftModel
-        print(f"Loading base model: {BASE_MODEL_ID}")
-        base = AutoModelForImageTextToText.from_pretrained(
-            BASE_MODEL_ID,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            token=os.environ.get("HF_TOKEN"),
-        )
-        print(f"Applying LoRA adapter from: {checkpoint_path}")
-        model = PeftModel.from_pretrained(base, checkpoint_path)
-        model = model.merge_and_unload()
-    else:
-        print(f"Loading full SFT model from: {checkpoint_path}")
-        model = AutoModelForImageTextToText.from_pretrained(
-            checkpoint_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-        )
-
-    processor = AutoProcessor.from_pretrained(
-        checkpoint_path if run_type != "lora" else BASE_MODEL_ID,
-        token=os.environ.get("HF_TOKEN"),
-    )
-    model.eval()
-    return model, processor
-
-
-def generate(model, processor, video_path: Path) -> tuple[str, int]:
-    import torch
-    from qwen_vl_utils import process_vision_info
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "video",
-                    "video": str(video_path),
-                    "max_pixels": VIDEO_MAX_PIXELS,
-                    "fps": VIDEO_FPS,
-                },
-                {"type": "text", "text": USER_PROMPT},
-            ],
-        },
-    ]
-
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    images, videos, video_kwargs = process_vision_info(
-        messages, image_patch_size=16, return_video_kwargs=True, return_video_metadata=True
-    )
-    if videos is not None:
-        videos, video_metadatas = zip(*videos)
-        videos, video_metadatas = list(videos), list(video_metadatas)
-    else:
-        video_metadatas = None
-
-    inputs = processor(
-        text=[text],
-        images=images,
-        videos=videos,
-        video_metadata=video_metadatas,
-        return_tensors="pt",
-        padding=True,
-        do_resize=False,
-        **video_kwargs,
-    ).to(model.device)
-
-    input_tokens = inputs["input_ids"].shape[1]
-
-    with torch.no_grad():
-        output_ids = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-
-    generated_ids = output_ids[:, input_tokens:]
-    response = processor.batch_decode(
-        generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )[0]
-
-    del inputs, output_ids, generated_ids
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    return response, input_tokens
+BASE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
 
 def parse_html(response: str) -> tuple[str | None, str]:
+    """Extract a complete HTML document from a model response.
+
+    Args:
+        response: Raw model output.
+
+    Returns:
+        (html, "") on success, or (None, error) if it is truncated or missing.
+    """
     m = re.search(r"```(?:\w+)?\s*(.*?)```", response, re.DOTALL)
     cleaned = m.group(1).strip() if m else response
     if not m:
         m = re.search(r"```(?:\w+)?\s*(.*)", response, re.DOTALL)
         if m:
             cleaned = m.group(1).strip()
-
     if "<html" not in cleaned.lower():
         return None, "Response did not contain a full HTML document (<html> tag missing)"
     if "</html>" not in cleaned.lower():
@@ -197,79 +41,152 @@ def parse_html(response: str) -> tuple[str | None, str]:
     return cleaned.strip(), ""
 
 
-def run_inference(run_type: str, checkpoint_dir: str, output_dir: str, test_data_dir: str):
-    from tqdm import tqdm
+def best_checkpoint(run_dir: Path) -> Path:
+    """Find the checkpoint-N with the lowest eval_loss.
 
-    checkpoint_path = find_best_checkpoint(checkpoint_dir)
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    Args:
+        run_dir: Training output directory.
 
-    print(f"Loading test data from {test_data_dir}...")
-    examples, video_dir = load_test_data(test_data_dir)
-    print(f"Test examples: {len(examples)}")
+    Returns:
+        Path to the best checkpoint.
+    """
+    checkpoints = sorted(run_dir.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+    if not checkpoints:
+        raise SystemExit(f"no checkpoint-* under {run_dir}")
+    history = json.loads((checkpoints[-1] / "trainer_state.json").read_text())["log_history"]
+    evals = {e["step"]: e["eval_loss"] for e in history if "eval_loss" in e}
+    step = min(evals, key=evals.get)
+    print(f"best checkpoint: checkpoint-{step} (eval_loss={evals[step]:.4f})")
+    return run_dir / f"checkpoint-{step}"
 
-    remaining = [
-        ex for ex in examples
-        if not (out_dir / ex / "full.html").exists()
-        and not (out_dir / ex / "_error.txt").exists()
+
+def load_model(variant: str, checkpoint: Path):
+    """Load a fine-tuned model and the base model's processor.
+
+    Args:
+        variant: "lora" or "full".
+        checkpoint: A specific checkpoint, or a training output directory. For a directory, LoRA uses
+            the lowest eval_loss checkpoint and full uses final/.
+
+    Returns:
+        (model, processor)
+    """
+    import torch
+    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
+    if variant == "lora":
+        from peft import PeftModel
+        if not (checkpoint / "adapter_config.json").exists():
+            checkpoint = best_checkpoint(checkpoint)
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            BASE_MODEL, dtype=torch.bfloat16, device_map="auto")
+        model = PeftModel.from_pretrained(model, str(checkpoint)).merge_and_unload()
+    else:
+        if not (checkpoint / "config.json").exists():
+            checkpoint = checkpoint / "final"
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            str(checkpoint), dtype=torch.bfloat16, device_map="auto")
+    model.eval()
+    return model, AutoProcessor.from_pretrained(BASE_MODEL)
+
+
+def generate(model, processor, video: Path, fps: float, max_pixels: int,
+             max_new_tokens: int, repetition_penalty: float) -> str:
+    """Generate HTML for one video with greedy decoding.
+
+    Args:
+        model: Loaded model.
+        processor: Qwen3-VL processor.
+        video: Path to the video.
+        fps: Frames per second sampled from the video.
+        max_pixels: Pixel budget per frame.
+        max_new_tokens: Maximum tokens to generate.
+        repetition_penalty: Penalty for repeated tokens; 1.0 turns it off.
+
+    Returns:
+        Raw response text.
+    """
+    import torch
+    from qwen_vl_utils import process_vision_info
+
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
+        {"role": "user", "content": [
+            {"type": "video", "video": str(video), "fps": fps, "max_pixels": max_pixels},
+            {"type": "text", "text": USER_PROMPT},
+        ]},
     ]
-    print(f"Already done: {len(examples) - len(remaining)}  Remaining: {len(remaining)}")
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    images, videos, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    if isinstance(video_kwargs.get("fps"), list):
+        f = video_kwargs["fps"]
+        video_kwargs["fps"] = float(f[0]) if f else fps
 
-    if not remaining:
-        print("Nothing to process.")
+    inputs = processor(text=[text], images=images, videos=videos,
+                       padding=True, return_tensors="pt", **video_kwargs).to(model.device)
+    n_in = inputs["input_ids"].shape[1]
+    with torch.no_grad():
+        out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
+                             repetition_penalty=repetition_penalty)
+    response = processor.batch_decode(out[:, n_in:], skip_special_tokens=True,
+                                      clean_up_tokenization_spaces=False)[0]
+    del inputs, out
+    gc.collect()
+    torch.cuda.empty_cache()
+    return response
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--variant", choices=["lora", "full"], required=True)
+    ap.add_argument("--checkpoint", type=Path, required=True,
+                    help="Training output dir, or one specific checkpoint inside it")
+    ap.add_argument("--test-dir", type=Path, default=HERE.parent / "anim2code_data" / "data" / "test")
+    ap.add_argument("--output-dir", type=Path, default=None, help="Default: output/<variant>_test")
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--num-shards", type=int, default=1)
+    ap.add_argument("--limit", type=int, default=None, help="Only run the first N examples")
+    ap.add_argument("--fps", type=float, default=2.0)
+    ap.add_argument("--max-pixels", type=int, default=112896)
+    ap.add_argument("--max-new-tokens", type=int, default=16384)
+    ap.add_argument("--repetition-penalty", type=float, default=1.05)
+    args = ap.parse_args()
+
+    out_root = args.output_dir or HERE / "output" / f"{args.variant}_test"
+    out_root.mkdir(parents=True, exist_ok=True)
+    examples = sorted(p.parent.name for p in args.test_dir.glob("*/animation.mp4"))
+    if not examples:
+        raise SystemExit(f"no test videos under {args.test_dir}")
+    mine = examples[:args.limit][args.shard::args.num_shards]
+    todo = [e for e in mine if not (out_root / e / "full.html").exists()
+            and not (out_root / e / "_error.txt").exists()]
+    print(f"[{args.variant} shard {args.shard}/{args.num_shards}] "
+          f"{len(mine)} assigned, {len(todo)} to do", flush=True)
+    if not todo:
         return
 
-    model, processor = load_model(run_type, checkpoint_path)
-    print(f"Model loaded. Running inference on {len(remaining)} examples ...")
+    model, processor = load_model(args.variant, args.checkpoint)
 
-    ok = err = 0
-    t_start = time.time()
-
-    for i, name in enumerate(tqdm(remaining, desc="inference", unit="ex")):
-        video_path = video_dir / f"{name}.mp4"
-        ex_dir = out_dir / name
-        ex_dir.mkdir(parents=True, exist_ok=True)
-
+    for i, ex in enumerate(todo, 1):
+        d = out_root / ex
+        d.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
         try:
-            t0 = time.time()
-            response, input_tokens = generate(model, processor, video_path)
-            elapsed = time.time() - t0
-
-            (ex_dir / "_raw_output.txt").write_text(response, encoding="utf-8")
-
-            html, error = parse_html(response)
+            resp = generate(model, processor, args.test_dir / ex / "animation.mp4", args.fps,
+                            args.max_pixels, args.max_new_tokens, args.repetition_penalty)
+            (d / "_raw_output.txt").write_text(resp)
+            html, err = parse_html(resp)
             if html is not None:
-                (ex_dir / "full.html").write_text(html, encoding="utf-8")
-                ok += 1
-                print(
-                    f"[{i+1}/{len(remaining)}] OK    {name}"
-                    f"  tokens={input_tokens}  chars={len(response)}  {elapsed:.1f}s"
-                )
+                (d / "full.html").write_text(html)
+                tag = "OK"
             else:
-                (ex_dir / "_error.txt").write_text(error, encoding="utf-8")
-                err += 1
-                print(f"[{i+1}/{len(remaining)}] ERROR {name}: {error}  {elapsed:.1f}s")
-
-        except Exception as e:
-            import traceback
-            error_msg = f"{type(e).__name__}: {e}"
-            (ex_dir / "_error.txt").write_text(error_msg, encoding="utf-8")
-            err += 1
-            print(f"[{i+1}/{len(remaining)}] EXCEPTION {name}: {error_msg}")
-            traceback.print_exc()
-            gc.collect()
-
-    total = time.time() - t_start
-    print(f"\nDone. OK: {ok}  Errors: {err}  Total: {total/60:.1f}min")
-    print(f"Results saved to: {out_dir}")
+                (d / "_error.txt").write_text(err)
+                tag = f"ERROR {err}"
+        except Exception as exc:
+            (d / "_error.txt").write_text(f"{type(exc).__name__}: {exc}")
+            tag = f"EXCEPTION {type(exc).__name__}"
+        print(f"  [{i}/{len(todo)}] {ex} {tag} {time.time() - t0:.1f}s", flush=True)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-type", choices=["lora", "full"], required=True)
-    parser.add_argument("--checkpoint-dir", required=True, help="Path to checkpoint directory")
-    parser.add_argument("--output-dir", required=True, help="Where to write per-example HTML")
-    parser.add_argument("--test-data-dir", required=True,
-                        help="Directory containing metadata.jsonl and videos/")
-    args = parser.parse_args()
-    run_inference(args.run_type, args.checkpoint_dir, args.output_dir, args.test_data_dir)
+    main()

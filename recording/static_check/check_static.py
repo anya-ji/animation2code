@@ -1,14 +1,7 @@
-"""
-Detect static (non-animating) animation.mp4 files in the dataset.
+"""Find static videos in a recording run and list them in static_videos.json.
 
-A video is considered static only if ALL consecutive frame pairs have a mean
-absolute pixel difference below a very tight threshold — i.e. the frames are
-essentially identical (codec noise only, no real motion).
-
-Outputs static example names to static_videos.json.
-
-Run from repo root:
-    uv run data_processing/check_static/check_static.py
+A video is static only if every consecutive frame pair has a mean absolute pixel difference below
+a very small threshold, meaning the frames differ by codec noise only.
 """
 
 import json
@@ -18,7 +11,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import cv2
 import numpy as np
 
-DATASET_DIR = os.environ.get("RUN_DIR", "recording/output/run1")
+DATASET_DIR = os.environ.get("RUN_DIR", os.path.join(os.path.dirname(__file__), "..", "output", "run1"))
 OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "static_videos.json")
 
 WORKERS = 8

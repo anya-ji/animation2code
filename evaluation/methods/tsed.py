@@ -1,33 +1,19 @@
-"""
-METHOD: TSED (Tree Similarity of Edit Distance)
+"""Measure code similarity as normalized tree edit distance between HTML ASTs (tree-sitter + APTED).
 
-Measures structural code similarity between two HTML files by computing the
-normalised tree-edit distance on their ASTs (via tree-sitter + APTED).
-
-Score is in [0, 1]:  1 = identical structure, 0 = completely dissimilar.
-
-No DTW — this method operates on full-document source code, not video frames.
-
-TSED formula (from https://github.com/Etamin/TSED):
     score = (max_sexp_len - edit_distance) / max_sexp_len
 
-Weights used: deletion=1.0, insertion=0.8, rename=1.0
-
-Usage (standalone):
-    uv run python evaluation/methods/tsed.py render.html gold.html
+Scores range from 0 to 1, where 1 is identical structure. Edit weights are deletion=1.0,
+insertion=0.8 and rename=1.0, following https://github.com/Etamin/TSED.
 """
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from apted import APTED, PerEditOperationConfig
 from tree_sitter import Tree
 from tree_sitter_language_pack import get_parser, SupportedLanguage
 
-
-# ─── AST utilities (from TSED reference implementation) ──────────────────────
 
 class Node:
     def __init__(self, name, path):
@@ -83,20 +69,16 @@ def _tsed(language: SupportedLanguage, origin: str, target: str) -> float:
     return 0.0 if dist > max_len else (max_len - dist) / max_len
 
 
-# ─── Public API ───────────────────────────────────────────────────────────────
-
-
 def run(render_path: str, gold_path: str) -> dict:
-    """Compute TSED code similarity between a rendered HTML file and a gold HTML file.
+    """Compute TSED between a generated HTML file and a gold HTML file.
 
     Args:
-        render_path: path to the generated HTML file.
-        gold_path:   path to the gold/reference HTML file.
+        render_path: Path to the generated HTML file.
+        gold_path: Path to the gold HTML file.
 
-    Returns:
-        score  – TSED similarity in [0, 1]
-        n_render_nodes – AST node count for the render file (sexp closing parens)
-        n_gold_nodes   – AST node count for the gold file
+    Returns a dict with:
+        score: TSED in [0, 1].
+        n_render_nodes, n_gold_nodes: AST node count of each file.
     """
     render_html = Path(render_path).read_text(encoding="utf-8", errors="replace")
     gold_html = Path(gold_path).read_text(encoding="utf-8", errors="replace")
@@ -117,9 +99,6 @@ def run(render_path: str, gold_path: str) -> dict:
         "n_render_nodes": tree_r.len_sexp,
         "n_gold_nodes": tree_g.len_sexp,
     }
-
-
-# ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
 def main():

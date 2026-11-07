@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-Baseline pipeline: inference → record.
-
-Runs model inference (run.py) then records animation.mp4 for each output (record.py).
-Both steps use the same model config; recording runs in a screen session by default.
-
-Usage:
-    python pipeline.py --config config/gemini.yaml
-    python pipeline.py --config config/gemini.yaml --recording-fps 12
-    python pipeline.py --config config/gemini.yaml --recording-fps 12 --record-sessions 2
-    python pipeline.py --config config/gemini.yaml --output-dir gemini/output/20260318_123456
-    python pipeline.py --config config/gemini.yaml --record-only --output-dir gemini/output/20260318_123456
-"""
+"""Run inference (run.py), then record each output to animation.mp4 (record.py), with one config."""
 import argparse
 import subprocess
 import sys
@@ -20,19 +8,18 @@ from pathlib import Path
 
 BASELINES_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASELINES_DIR.parent
-DEFAULT_RECORDER = REPO_ROOT / "data_processing" / "video_processing" / "v2" / "record.js"
+DEFAULT_RECORDER = REPO_ROOT / "recording" / "record.js"
 
 
-def run_inference(config: str, output_dir: str | None, extra_args: list[str]) -> str:
-    """Run inference and return the output directory path."""
+def run_inference(config: str, output_dir: str | None, extra_args: list[str]) -> None:
+    """Run run.py for a config, writing to output_dir."""
     cmd = [sys.executable, str(BASELINES_DIR / "run.py"), "--config", config]
     if output_dir:
         cmd += ["--output-dir", output_dir]
     cmd += extra_args
     print(f"\n=== Inference ===")
     print(f"  {' '.join(cmd)}\n")
-    result = subprocess.run(cmd, check=True, capture_output=False)
-    return output_dir
+    subprocess.run(cmd, check=True)
 
 
 def run_record(
@@ -44,7 +31,17 @@ def run_record(
     rewrite: bool,
     output_name: str | None = None,
 ) -> None:
-    """Launch recording via record.py."""
+    """Run record.py on a finished run.
+
+    Args:
+        input_dir: Run directory with <id>/full.html.
+        recorder: Path to record.js.
+        fps: Recording frame rate; None uses the recorder's default of 30.
+        sessions: Number of parallel screen sessions.
+        concurrency: Browser workers per session.
+        rewrite: Re-record finished examples.
+        output_name: Output filename per example.
+    """
     cmd = [
         sys.executable, str(BASELINES_DIR / "record.py"),
         "--input", input_dir,
@@ -99,7 +96,6 @@ def main():
         "--output-name", default=None,
         help="Output filename per example (default: animation.mp4)",
     )
-    # Pass-through args for run.py (inference)
     parser.add_argument("--start", type=int, default=None)
     parser.add_argument("--end", type=int, default=None)
     parser.add_argument("--ids", nargs="+")
@@ -115,16 +111,13 @@ def main():
         _cfg = yaml.safe_load(f)
     _base = BASELINES_DIR / _cfg["output"]["base_dir"]
 
-    # ── Pre-generate output dir to avoid concurrent-run race conditions ───
-    # Pass it explicitly to run.py so both inference and recording use the
-    # exact same dir regardless of what other pipelines create concurrently.
+    # Fix the run dir up front so concurrent pipelines cannot mix up their outputs.
     if not args.record_only and not args.output_dir:
         _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         _suffix = str(_cfg.get("output", {}).get("suffix", "")).strip()
         _run_name = f"{_ts}_{_suffix}" if _suffix else _ts
         args.output_dir = str(_base / _run_name)
 
-    # ── Inference ─────────────────────────────────────────────────────────
     if not args.record_only:
         extra = []
         if args.start is not None:
@@ -135,11 +128,9 @@ def main():
             extra += ["--ids"] + args.ids
         run_inference(config, args.output_dir, extra)
 
-    # ── Determine output dir for recording ────────────────────────────────
     output_dir = str(Path(args.output_dir).resolve())
     print(f"Recording from run: {output_dir}")
 
-    # ── Recording ─────────────────────────────────────────────────────────
     run_record(
         input_dir=output_dir,
         recorder=args.recorder,

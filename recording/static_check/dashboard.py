@@ -1,11 +1,6 @@
-"""
-Dashboard to review static_videos.json.
-Videos stream directly from the dataset directory.
-Click "Not static" to remove a false positive from the JSON.
+"""Dashboard for reviewing static_videos.json.
 
-Run:
-    uv run dashboard.py
-Then open http://localhost:8080
+Streams videos from the run directory. "Not static" removes a false positive from the JSON.
 """
 
 import http.server
@@ -14,7 +9,7 @@ import os
 import urllib.parse
 
 PORT = 8080
-DATASET_DIR = os.environ.get("RUN_DIR", "recording/output/run1")
+DATASET_DIR = os.environ.get("RUN_DIR", os.path.join(os.path.dirname(__file__), "..", "output", "run1"))
 JSON_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "static_videos.json"))
 PAGE_SIZE = 6
 

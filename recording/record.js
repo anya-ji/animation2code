@@ -5,9 +5,9 @@ import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, "../../..");
-const DATASET_DIR = path.join(REPO_ROOT, "dataset");
-const LOG_DIR = path.join(REPO_ROOT, "log");
+const REPO_ROOT = path.resolve(__dirname, "..");
+const DATASET_DIR = path.join(REPO_ROOT, "anim2code_data", "data", "test");
+const LOG_DIR = path.join(__dirname, "log");
 
 const CONFIG = {
   width: 1024,
@@ -133,10 +133,7 @@ const JS_TIME_INJECTION = `
 
 // Find puppeteer-bundled chrome-headless-shell (required by puppeteer-capture)
 const CHROME_HEADLESS_SHELL = (() => {
-  const base = path.join(
-    process.env.HOME || "/home/anyaji",
-    ".cache/puppeteer/chrome-headless-shell"
-  );
+  const base = path.join(process.env.HOME, ".cache/puppeteer/chrome-headless-shell");
   if (!fs.existsSync(base)) return undefined;
   const builds = fs.readdirSync(base).sort().reverse();
   for (const build of builds) {
@@ -145,8 +142,6 @@ const CHROME_HEADLESS_SHELL = (() => {
   }
   return undefined;
 })();
-
-// ─── CLI ─────────────────────────────────────────────────────────────────
 
 function parseArgs() {
   const argv = process.argv.slice(2);
@@ -180,8 +175,6 @@ function parseArgs() {
   return opts;
 }
 
-// ─── Animation type detection ─────────────────────────────────────────────
-
 function detectAnimationType(html) {
   for (const pat of JS_PATTERNS) {
     if (pat.test(html)) return "js";
@@ -214,8 +207,6 @@ function estimateDuration(html) {
   return CONFIG.defaultDurationUnknown;
 }
 
-// ─── Loop short videos with ffmpeg ───────────────────────────────────────
-
 function loopVideo(inputPath, outputPath, minDurationS) {
   execSync(
     `ffmpeg -y -stream_loop -1 -i "${inputPath}" -t ${minDurationS} ` +
@@ -223,8 +214,6 @@ function loopVideo(inputPath, outputPath, minDurationS) {
     { stdio: "pipe" }
   );
 }
-
-// ─── Primary recording (puppeteer-capture) ────────────────────────────────
 
 async function recordExample(browser, exampleName, sourceDir, outputDir, opts, staticLogStream) {
   const htmlPath = path.join(sourceDir, exampleName, "full.html");
@@ -334,8 +323,6 @@ async function recordExample(browser, exampleName, sourceDir, outputDir, opts, s
   }
 }
 
-// ─── Manifest ─────────────────────────────────────────────────────────────
-
 function loadManifest(manifestPath) {
   if (!fs.existsSync(manifestPath)) return { results: [] };
   try { return JSON.parse(fs.readFileSync(manifestPath, "utf-8")); } catch { return { results: [] }; }
@@ -356,8 +343,6 @@ function saveManifest(manifestPath, results, opts, startTime) {
   };
   fs.writeFileSync(manifestPath, JSON.stringify(data, null, 2));
 }
-
-// ─── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
   const opts = parseArgs();

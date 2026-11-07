@@ -1,27 +1,9 @@
-"""
-METHOD3: Dynamic Time Warping (DTW)
+"""Align two videos in time with dynamic time warping (DTW).
 
-Aligns two video sequences in time using DTW, measuring the minimum
-accumulated cost of matching every frame in one video to a frame in
-the other, allowing non-linear warping of the time axis.
+Finds the lowest total cost of matching every frame in one video to a frame in the other,
+allowing the time axis to stretch. Frame cost is the mean absolute grayscale difference, in [0, 1].
 
-Frame distance: mean absolute difference of grayscale pixel values,
-normalised to [0, 1].
-
-Algorithm (follows the standard DTW recurrence):
-    DTW[0, 0] = 0
-    DTW[i, j] = cost(i, j) + min(DTW[i-1, j],    # insertion
-                                  DTW[i, j-1],    # deletion
-                                  DTW[i-1, j-1])  # match
-
-Outputs:
-    alignment_cost  – scalar total alignment cost (DTW[n, m])
-    path            – list of [i, j] frame index pairs tracing the
-                      optimal alignment from start to end
-    cost_matrix     – full n×m accumulated cost matrix (2-D list)
-
-Usage (standalone):
-    uv run python evaluation/methods/dtw.py render.mp4 gold.mp4
+    DTW[i, j] = cost(i, j) + min(DTW[i-1, j], DTW[i, j-1], DTW[i-1, j-1])
 """
 
 import sys
@@ -29,22 +11,19 @@ from pathlib import Path
 
 import numpy as np
 
-# Ensure evaluation/ is on sys.path so 'methods' is importable when run standalone
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from methods._utils import load_frames, to_grayscale
 
 
 def frame_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """Mean absolute pixel difference between two grayscale float32 frames.
+    """Return the mean absolute pixel difference between two grayscale frames, in [0, 1].
 
-    Both inputs are resized to the smaller of the two spatial dimensions
-    so that videos recorded at different resolutions can still be compared.
+    Frames are resized to the smaller of the two sizes, so videos of different resolutions can be compared.
 
-    Returns a value in [0, 1].
+    Args:
+        a, b: Grayscale float32 frames.
     """
-    # Resize b to match a's shape if they differ
     if a.shape != b.shape:
-        # Simple nearest-neighbour downscale to the smaller of the two
         th = min(a.shape[0], b.shape[0])
         tw = min(a.shape[1], b.shape[1])
         a = a[:th, :tw]
@@ -53,14 +32,18 @@ def frame_distance(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def build_cost_matrix(render_frames: list[np.ndarray], gold_frames: list[np.ndarray]) -> np.ndarray:
-    """Build the pairwise frame-distance matrix D where D[i,j] = dist(render[i], gold[j]).
+    """Build the pairwise distance matrix, where D[i, j] = dist(render[i], gold[j]).
 
-    Returns an n×m float32 array.
+    Args:
+        render_frames: Grayscale render frames.
+        gold_frames: Grayscale gold frames.
+
+    Returns:
+        n×m float32 array.
     """
     n = len(render_frames)
     m = len(gold_frames)
 
-    # Pre-convert all frames to grayscale once to avoid redundant work
     render_gray = [to_grayscale(f) for f in render_frames]
     gold_gray = [to_grayscale(f) for f in gold_frames]
 
@@ -72,28 +55,27 @@ def build_cost_matrix(render_frames: list[np.ndarray], gold_frames: list[np.ndar
 
 
 def dtw(D: np.ndarray) -> tuple[float, list[list[int]], list[list[float]]]:
-    """Run DTW on a precomputed pairwise distance matrix D (n×m).
+    """Run DTW on a precomputed n×m distance matrix.
+
+    Args:
+        D: Pairwise distance matrix.
 
     Returns:
-        alignment_cost  – scalar DTW distance
-        path            – list of [i, j] pairs (0-indexed) from [0,0] to [n-1, m-1]
-        cost_matrix     – accumulated cost matrix as a 2-D Python list
+        alignment_cost: Total DTW distance.
+        path: 0-indexed [i, j] pairs from [0, 0] to [n-1, m-1].
+        cost_matrix: Accumulated cost matrix as a nested list.
     """
     n, m = D.shape
 
-    # Accumulated cost matrix; use float64 for numerical stability
     C = np.full((n, m), np.inf, dtype=np.float64)
     C[0, 0] = D[0, 0]
 
-    # Fill first row (only deletion moves available)
     for j in range(1, m):
         C[0, j] = D[0, j] + C[0, j - 1]
 
-    # Fill first column (only insertion moves available)
     for i in range(1, n):
         C[i, 0] = D[i, 0] + C[i - 1, 0]
 
-    # Fill the rest of the matrix
     for i in range(1, n):
         for j in range(1, m):
             C[i, j] = D[i, j] + min(
@@ -126,19 +108,17 @@ def dtw(D: np.ndarray) -> tuple[float, list[list[int]], list[list[float]]]:
 
 
 def run(render_path: str, gold_path: str) -> dict:
-    """Compute DTW alignment between render and gold videos.
+    """Compute the DTW alignment between a render and a gold video.
 
     Args:
-        render_path: path to the candidate/render video.
-        gold_path:   path to the gold/reference video.
+        render_path: Path to the rendered video.
+        gold_path: Path to the gold video.
 
-    Returns:
-        dict with keys:
-          alignment_cost  – scalar total DTW cost
-          path            – list of [i, j] matched frame index pairs
-          cost_matrix     – 2-D accumulated cost matrix (n×m)
-          n_render_frames – number of frames in the render video
-          n_gold_frames   – number of frames in the gold video
+    Returns a dict with:
+        alignment_cost: Total DTW cost.
+        path: Matched [i, j] frame index pairs.
+        cost_matrix: n×m accumulated cost matrix.
+        n_render_frames, n_gold_frames: Frames in each video.
     """
     render_frames = load_frames(render_path)
     gold_frames = load_frames(gold_path)
@@ -153,5 +133,3 @@ def run(render_path: str, gold_path: str) -> dict:
         "n_render_frames": len(render_frames),
         "n_gold_frames": len(gold_frames),
     }
-
-

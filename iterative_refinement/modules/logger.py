@@ -1,12 +1,7 @@
-"""
-Logging utilities for the iterative refinement pipeline.
+"""Logging for the iterative refinement pipeline.
 
-RunLogger:    wraps Python's standard logging; writes to both console and
-              a timestamped run.log file under the run output directory.
-
-ExampleTrace: accumulates per-example data as a dict and writes it to
-              trace.json inside the example's output directory.
-              If a fatal error occurs mid-run, the partial trace is still saved.
+RunLogger writes to the console and to run.log in the run directory. ExampleTrace collects each
+example's history in trace.json, so a partial trace survives a crash.
 """
 
 import json
@@ -26,19 +21,17 @@ class RunLogger:
 
         self.logger = logging.getLogger(f"iterref.{run_id}")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.propagate = False  # don't double-log to root
+        self.logger.propagate = False
 
         fmt = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
-        # File handler (full debug output)
         fh = logging.FileHandler(log_path, encoding="utf-8")
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(fmt)
         self.logger.addHandler(fh)
 
-        # Console handler (info and above)
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.INFO)
         ch.setFormatter(fmt)
@@ -63,12 +56,7 @@ class RunLogger:
 
 
 class ExampleTrace:
-    """
-    Records the full history of one example's pipeline run.
-
-    Saved as trace.json in the example's output directory.
-    Call save() after each stage so a partial trace survives a crash.
-    """
+    """Record one example's pipeline run in trace.json. Call save() after each stage."""
 
     def __init__(self, example_id: str, example_dir: Path):
         self.example_id = example_id
