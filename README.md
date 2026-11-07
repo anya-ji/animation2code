@@ -21,3 +21,9 @@ hf download anim2code/dataset --repo-type dataset --local-dir anim2code_data
 Each example is `anim2code_data/data/{train,val,test}/<id>/` with `animation.mp4`, `full.html` and `metadata.json`.
 
 Run the commands in each folder's README from that folder.
+
+## License
+
+The code is released under the [MIT License](LICENSE).
+
+The dataset is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The source code of each animation belongs to its original CodePen author and is MIT-licensed under [CodePen's licensing policy](https://blog.codepen.io/documentation/licensing/). Each example's `metadata.json` links to the original pen.
